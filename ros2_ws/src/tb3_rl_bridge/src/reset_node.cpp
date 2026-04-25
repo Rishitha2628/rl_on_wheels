@@ -89,8 +89,6 @@ public:
         handle_reset(req, res);
       });
 
-    // Delete any leftover goal_marker from a previous run
-    delete_entity("goal_marker");
 
     RCLCPP_INFO(get_logger(), "ResetNode ready (Ignition). model=%s world=%s bounds=[%.1f,%.1f]x[%.1f,%.1f]",
                 tb3_model_.c_str(), world_name_.c_str(), x_min_, x_max_, y_min_, y_max_);

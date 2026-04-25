@@ -2,7 +2,8 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
-                             IncludeLaunchDescription, RegisterEventHandler)
+                             IncludeLaunchDescription, RegisterEventHandler,
+                             SetEnvironmentVariable)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -14,7 +15,7 @@ def generate_launch_description():
     pkg_bridge = get_package_share_directory("tb3_rl_bridge")
     pkg_ros_gz_sim = get_package_share_directory("ros_gz_sim")
 
-    world_file = os.path.join(pkg_bridge, "worlds", "tb3_empty.sdf")
+    world_file = os.path.join(pkg_bridge, "worlds", "tb3_house.sdf")
 
     use_sim_time        = LaunchConfiguration("use_sim_time",        default="true")
     collision_threshold = LaunchConfiguration("collision_threshold",  default="0.2")
@@ -47,6 +48,12 @@ def generate_launch_description():
         DeclareLaunchArgument("step_duration",       default_value="0.1"),
         DeclareLaunchArgument("headless",            default_value="false",
                               description="true = skip GUI entirely"),
+
+        # Let Ignition resolve model:// URIs for turtlebot3_gazebo models
+        SetEnvironmentVariable(
+            'IGN_GAZEBO_RESOURCE_PATH',
+            '/opt/ros/humble/share/turtlebot3_gazebo/models',
+        ),
 
         # Server — required (simulation can't run without it)
         gz_server,
@@ -114,11 +121,11 @@ def generate_launch_description():
             parameters=[{
                 "use_sim_time": use_sim_time,
                 "tb3_model": "waffle_pi",
-                "world_name": "empty",
-                "world_x_min": -2.0,
-                "world_x_max":  2.0,
+                "world_name": "house",
+                "world_x_min": -3.0,
+                "world_x_max":  3.0,
                 "world_y_min": -2.0,
-                "world_y_max":  2.0,
+                "world_y_max":  2.5,
                 "robot_min_goal_dist": 0.5,
                 "goal_sphere_radius": 0.1,
             }],
