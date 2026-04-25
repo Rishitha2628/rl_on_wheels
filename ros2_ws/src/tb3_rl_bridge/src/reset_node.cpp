@@ -70,6 +70,12 @@ public:
         std::lock_guard<std::mutex> lk(mtx_);
         odom_x_ = static_cast<float>(msg->pose.pose.position.x);
         odom_y_ = static_cast<float>(msg->pose.pose.position.y);
+        auto & q = msg->pose.pose.orientation;
+        odom_yaw_ = std::atan2(
+          2.0f * (static_cast<float>(q.w) * static_cast<float>(q.z) +
+                  static_cast<float>(q.x) * static_cast<float>(q.y)),
+          1.0f - 2.0f * (static_cast<float>(q.y) * static_cast<float>(q.y) +
+                         static_cast<float>(q.z) * static_cast<float>(q.z)));
       }, sub_opts);
 
     goal_pub_    = create_publisher<geometry_msgs::msg::PoseStamped>("/goal_pose", 10);
@@ -124,18 +130,27 @@ private:
     // movement contaminating the reading.
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
-    float post_odom_x, post_odom_y;
+    float post_odom_x, post_odom_y, post_odom_yaw;
     {
       std::lock_guard<std::mutex> lk(mtx_);
-      post_odom_x = odom_x_;
-      post_odom_y = odom_y_;
+      post_odom_x   = odom_x_;
+      post_odom_y   = odom_y_;
+      post_odom_yaw = odom_yaw_;
     }
 
-    // goal_odom = goal_world + (odom_after_teleport − robot_world_after_teleport)
-    // This maps the world-frame goal into whatever odom frame is now active,
-    // regardless of whether odom reset to ~(0,0) or kept accumulating.
-    float goal_odom_x = gx + (post_odom_x - rx);
-    float goal_odom_y = gy + (post_odom_y - ry);
+    // Transform goal from world frame to odom frame, accounting for both the
+    // translational offset and the rotational offset between frames.
+    // The DiffDrive plugin does not reset its accumulated heading when set_pose
+    // is called, so the odom frame can be rotated by dtheta = post_odom_yaw - rtheta
+    // relative to the world frame. Ignoring this rotation causes goal_odom to point
+    // in the wrong direction, which is why the robot appears to "reach" the wrong spot.
+    float dtheta    = post_odom_yaw - rtheta;
+    float cos_d     = std::cos(dtheta);
+    float sin_d     = std::sin(dtheta);
+    float dgx       = gx - rx;
+    float dgy       = gy - ry;
+    float goal_odom_x = post_odom_x + cos_d * dgx - sin_d * dgy;
+    float goal_odom_y = post_odom_y + sin_d * dgx + cos_d * dgy;
     publish_goal(goal_odom_x, goal_odom_y);
     std::thread([this, gx, gy]() { update_goal_marker(gx, gy); }).detach();
 
@@ -144,9 +159,10 @@ private:
 
     RCLCPP_INFO(get_logger(),
                 "Reset: robot_world=(%.2f,%.2f,θ=%.2f) goal_world=(%.2f,%.2f) | "
-                "post_odom=(%.2f,%.2f) goal_odom=(%.2f,%.2f)",
+                "post_odom=(%.2f,%.2f,θ=%.2f) dtheta=%.2f goal_odom=(%.2f,%.2f)",
                 rx, ry, rtheta, gx, gy,
-                post_odom_x, post_odom_y, goal_odom_x, goal_odom_y);
+                post_odom_x, post_odom_y, post_odom_yaw, dtheta,
+                goal_odom_x, goal_odom_y);
   }
 
   // ── random pose sampling ───────────────────────────────────────────────────
@@ -277,7 +293,7 @@ private:
   std::string tb3_model_, world_name_;
   double x_min_, x_max_, y_min_, y_max_;
   double min_dist_, sphere_radius_;
-  float odom_x_ = 0.0f, odom_y_ = 0.0f;
+  float odom_x_ = 0.0f, odom_y_ = 0.0f, odom_yaw_ = 0.0f;
 
   std::mt19937 rng_;
   bool goal_spawned_;
