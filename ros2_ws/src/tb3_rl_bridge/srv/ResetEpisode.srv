@@ -1,0 +1,10 @@
+# Request: reset robot + goal to new random poses
+bool random_pose           # always true during training; false for fixed eval spawns
+float32 spawn_x            # ignored when random_pose = true
+float32 spawn_y
+float32 spawn_theta
+float32 goal_x             # ignored when random_pose = true
+float32 goal_y
+---
+bool success
+string info

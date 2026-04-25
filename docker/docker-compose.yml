@@ -1,0 +1,85 @@
+version: "3.9"
+
+x-ros-env: &ros-env
+  TURTLEBOT3_MODEL: "${TURTLEBOT3_MODEL:-waffle_pi}"
+  ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-0}"
+  DISPLAY: "${DISPLAY:-:0}"
+  NVIDIA_VISIBLE_DEVICES: all
+  NVIDIA_DRIVER_CAPABILITIES: all
+  __GLX_VENDOR_LIBRARY_NAME: nvidia
+  __NV_PRIME_RENDER_OFFLOAD: "1"
+  MESA_LOADER_DRIVER_OVERRIDE: nvidia
+
+x-gpu-resources: &gpu-resources
+  reservations:
+    devices:
+      - driver: nvidia
+        count: all
+        capabilities: [gpu, graphics, display, utility]
+
+services:
+  sim:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      <<: *ros-env
+      HEADLESS: "${HEADLESS:-0}"
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ../ros2_ws/src:/ros2_ws/src
+      - ../configs:/configs:ro
+    network_mode: host
+    ipc: host
+    command: /scripts/launch_sim.sh
+    # Remove the deploy block below for CPU-only (no nvidia runtime required)
+    deploy:
+      resources: *gpu-resources
+
+  train:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      <<: *ros-env
+      PYTHONPATH: "/rl"
+      CONFIG: "/configs/sac_her.yaml"
+      CHECKPOINT: "${CHECKPOINT:-}"
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ../rl:/rl:ro
+      - ../configs:/configs:ro
+      - ../checkpoints:/checkpoints
+      - ../logs:/logs
+    network_mode: host
+    ipc: host
+    command: python3 /rl/train.py --config /configs/sac_her.yaml
+    depends_on:
+      - sim
+    ports:
+      - "6006:6006"    # TensorBoard
+    deploy:
+      resources: *gpu-resources
+
+  eval:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      <<: *ros-env
+      PYTHONPATH: "/rl"
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ../rl:/rl:ro
+      - ../configs:/configs:ro
+      - ../checkpoints:/checkpoints:ro
+    network_mode: host
+    ipc: host
+    command: >
+      python3 /rl/eval.py
+        --config /configs/sac_her.yaml
+        --checkpoint ${CHECKPOINT:-checkpoints/final_model}
+    depends_on:
+      - sim
+    deploy:
+      resources: *gpu-resources

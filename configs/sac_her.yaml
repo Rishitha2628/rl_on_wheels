@@ -1,0 +1,61 @@
+sac:
+  learning_rate: 1.0e-4
+  buffer_size: 1_000_000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99          # 0.95 was too low — with max 600 steps the agent couldn't see the goal reward
+  train_freq: 1
+  gradient_steps: 2
+  ent_coef: "auto"     # learnable temperature
+  # SB3 default target_entropy=-2 assumes symmetric [-1,1] actions.
+  # Our [0, max_lv] x [-max_av, max_av] space shifts log_prob by +2.73,
+  # so -0.73 gives the same ~2-nat equilibrium as standard SAC benchmarks.
+  target_entropy: -0.73
+  target_update_interval: 2
+  learning_starts: 1000
+  total_timesteps: 1_000_000
+
+env:
+  lidar_bins: 36
+  max_lidar_range: 3.5
+  collision_threshold: 0.2
+  tb3_model: "waffle_pi"
+  goal_tolerance: 0.3
+  max_episode_steps: 600
+
+  # Reward weights (used by env_bridge_node)
+  goal_reward: 1.0
+  collision_penalty: -1.0
+  time_penalty: -0.005
+  distance_reward_scale: 1.0
+
+  # TurtleBot3 waffle_pi velocity limits
+  max_linear_vel: 0.26          # m/s
+  max_angular_vel: 0.5          # rad/s
+
+  # World bounds for random spawns [x_min, x_max, y_min, y_max]
+  world_bounds: [-2.0, 2.0, -2.0, 2.0]
+  robot_min_goal_dist: 0.5      # minimum distance from spawn to goal
+
+ros2:
+  observation_service: "/get_observation"
+  step_service: "/step"
+  reset_service: "/reset_episode"
+  cmd_vel_topic: "/cmd_vel"
+  scan_topic: "/scan"
+  odom_topic: "/odom"
+  goal_pose_topic: "/goal_pose"
+  reward_topic: "/reward"
+  episode_done_topic: "/episode_done"
+  service_timeout_sec: 10.0
+  step_duration_sec: 0.1        # seconds to apply action before reading obs
+
+training:
+  checkpoint_dir: "/checkpoints"
+  checkpoint_freq: 10_000
+  tensorboard_log: "/logs/tensorboard"
+  log_interval: 10
+
+eval:
+  n_eval_episodes: 10
+  deterministic: true

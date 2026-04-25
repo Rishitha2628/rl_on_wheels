@@ -1,0 +1,9 @@
+# Request: [linear_vel, angular_vel]
+float32[] action
+---
+float32[] observation      # 38 dims (same layout as GetObservation)
+float32[] achieved_goal    # [robot_x, robot_y]
+float32[] desired_goal     # [goal_x,  goal_y]
+float32 reward
+bool done
+string info                # "goal_reached" | "collision" | ""

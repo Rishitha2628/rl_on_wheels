@@ -1,0 +1,6 @@
+# Request: empty — returns current cached sensor state
+---
+float32[] observation      # 36 lidar bins (normalised) + lin_vel + ang_vel  = 38 dims
+float32[] achieved_goal    # [robot_x, robot_y]  — 2 dims
+float32[] desired_goal     # [goal_x,  goal_y]   — 2 dims
+bool success
