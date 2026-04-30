@@ -1,9 +1,12 @@
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <mutex>
 #include <random>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
@@ -22,6 +25,26 @@
 
 using ResetEpisode = tb3_rl_bridge::srv::ResetEpisode;
 using namespace std::chrono_literals;
+
+// Box obstacle: 0.15 m deep × 1.2 m wide × 0.6 m tall.
+// Placed perpendicular to the robot→goal line so the robot must navigate around it.
+static const char * OBS_BOX_SDF = R"(
+<?xml version='1.0'?>
+<sdf version='1.8'>
+  <model name='%NAME%'>
+    <static>true</static>
+    <link name='link'>
+      <pose>0 0 0.3 0 0 0</pose>
+      <collision name='col'>
+        <geometry><box><size>0.15 1.2 0.6</size></box></geometry>
+      </collision>
+      <visual name='vis'>
+        <geometry><box><size>0.15 1.2 0.6</size></box></geometry>
+        <material><ambient>0.4 0.2 0.1 1</ambient><diffuse>0.4 0.2 0.1 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+</sdf>)";
 
 // Minimal SDF 1.8 sphere — spawned each episode as the goal marker.
 static const char * GOAL_SPHERE_SDF = R"(
@@ -46,7 +69,7 @@ class ResetNode : public rclcpp::Node
 {
 public:
   ResetNode()
-  : Node("reset_node"), rng_(std::random_device{}()), goal_spawned_(false)
+  : Node("reset_node"), rng_(std::random_device{}()), goal_spawned_(false), obs_spawned_(false)
   {
     tb3_model_     = declare_parameter("tb3_model", std::string("waffle_pi"));
     x_min_         = declare_parameter("world_x_min", -2.0);
@@ -56,6 +79,7 @@ public:
     min_dist_      = declare_parameter("robot_min_goal_dist", 0.5);
     sphere_radius_ = declare_parameter("goal_sphere_radius",  0.1);
     world_name_    = declare_parameter("world_name", std::string("empty"));
+    n_obstacles_   = declare_parameter("n_obstacles", 0);
 
     // Reentrant group so the odom callback can fire while the service
     // handler is sleeping after a teleport.
@@ -89,6 +113,8 @@ public:
         handle_reset(req, res);
       });
 
+    // Delete any leftover goal_marker from a previous run
+    delete_entity("goal_marker");
 
     RCLCPP_INFO(get_logger(), "ResetNode ready (Ignition). model=%s world=%s bounds=[%.1f,%.1f]x[%.1f,%.1f]",
                 tb3_model_.c_str(), world_name_.c_str(), x_min_, x_max_, y_min_, y_max_);
@@ -99,9 +125,11 @@ private:
                     ResetEpisode::Response::SharedPtr     res)
   {
     float rx, ry, rtheta, gx, gy;
+    std::vector<XY>    obs_pos;
+    std::vector<float> obs_yaw;
 
     if (req->random_pose) {
-      std::tie(rx, ry, rtheta, gx, gy) = sample_random_poses();
+      sample_all_poses(rx, ry, rtheta, gx, gy, obs_pos, obs_yaw);
     } else {
       rx     = req->spawn_x;
       ry     = req->spawn_y;
@@ -110,13 +138,17 @@ private:
       gy     = req->goal_y;
     }
 
-    // Stop the robot so the previous episode's cmd_vel doesn't cause movement
-    // after the teleport. A stationary robot means odom is stable when we read it.
     {
       geometry_msgs::msg::Twist zero;
       cmd_vel_pub_->publish(zero);
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(80));
+
+    if (!obs_spawned_) {
+      spawn_all_obstacles(obs_pos, obs_yaw);
+    } else {
+      teleport_all_obstacles(obs_pos, obs_yaw);
+    }
 
     bool ok = teleport_robot(rx, ry, rtheta);
 
@@ -163,20 +195,77 @@ private:
                 goal_odom_x, goal_odom_y);
   }
 
-  // ── random pose sampling ───────────────────────────────────────────────────
-  std::tuple<float, float, float, float, float> sample_random_poses()
+  // ── pose sampling ──────────────────────────────────────────────────────────
+  using XY = std::pair<float, float>;
+  static std::string obs_name(int i) { return "dyn_obs_" + std::to_string(i); }
+
+  // Robot spawns on one side, goal on the other, box obstacle between them.
+  void sample_all_poses(float & rx, float & ry, float & rtheta,
+                        float & gx, float & gy,
+                        std::vector<XY> & obs_pos, std::vector<float> & obs_yaw)
   {
-    std::uniform_real_distribution<float> dx(x_min_, x_max_);
-    std::uniform_real_distribution<float> dy(y_min_, y_max_);
-    std::uniform_real_distribution<float> dtheta(-M_PI, M_PI);
+    std::uniform_real_distribution<float> dxy(x_min_, x_max_);
+    std::uniform_real_distribution<float> ddir(-M_PI, M_PI);
+    std::uniform_real_distribution<float> d1_dist(0.7f, 1.1f);
+    std::uniform_real_distribution<float> d2_dist(0.7f, 1.1f);
 
-    float rx, ry, gx, gy;
+    int tries = 0;
     do {
-      rx = dx(rng_); ry = dy(rng_);
-      gx = dx(rng_); gy = dy(rng_);
-    } while (std::hypot(rx - gx, ry - gy) < static_cast<float>(min_dist_));
+      rx         = dxy(rng_); ry = dxy(rng_);
+      float dir  = ddir(rng_);
+      float d1   = d1_dist(rng_);   // robot → obstacle
+      float d2   = d2_dist(rng_);   // obstacle → goal
+      float ox   = rx + d1 * std::cos(dir);
+      float oy   = ry + d1 * std::sin(dir);
+      gx         = std::clamp(ox + d2 * std::cos(dir),
+                              static_cast<float>(x_min_), static_cast<float>(x_max_));
+      gy         = std::clamp(oy + d2 * std::sin(dir),
+                              static_cast<float>(y_min_), static_cast<float>(y_max_));
+      obs_pos    = {{ox, oy}};
+      obs_yaw    = {dir + static_cast<float>(M_PI_2)};
+    } while (++tries < 200 &&
+             std::hypot(gx - rx, gy - ry) < static_cast<float>(min_dist_));
 
-    return {rx, ry, dtheta(rng_), gx, gy};
+    rtheta = std::atan2(gy - ry, gx - rx);
+
+    if (n_obstacles_ == 0) { obs_pos.clear(); obs_yaw.clear(); }
+  }
+
+  void spawn_all_obstacles(const std::vector<XY> & poses,
+                           const std::vector<float> & yaws)
+  {
+    for (int i = 0; i < static_cast<int>(poses.size()); ++i) {
+      std::string sdf(OBS_BOX_SDF);
+      auto p = sdf.find("%NAME%");
+      if (p != std::string::npos) sdf.replace(p, 6, obs_name(i));
+      spawn_entity(sdf, poses[i].first, poses[i].second, 0.0f, yaws[i]);
+    }
+    obs_spawned_ = true;
+  }
+
+  void teleport_all_obstacles(const std::vector<XY> & poses,
+                              const std::vector<float> & yaws)
+  {
+    for (int i = 0; i < static_cast<int>(poses.size()); ++i)
+      teleport_entity(obs_name(i), poses[i].first, poses[i].second, yaws[i], 0.0f);
+  }
+
+  // ── Ignition gz-transport: teleport any entity ────────────────────────────
+  bool teleport_entity(const std::string & name, float x, float y,
+                       float theta = 0.0f, float z = 0.0f)
+  {
+    ignition::msgs::Pose req;
+    req.set_name(name);
+    req.mutable_position()->set_x(x);
+    req.mutable_position()->set_y(y);
+    req.mutable_position()->set_z(z);
+    req.mutable_orientation()->set_x(0.0);
+    req.mutable_orientation()->set_y(0.0);
+    req.mutable_orientation()->set_z(std::sin(theta * 0.5));
+    req.mutable_orientation()->set_w(std::cos(theta * 0.5));
+    ignition::msgs::Boolean res; bool result = false;
+    ign_node_.Request("/world/" + world_name_ + "/set_pose", req, 2000, res, result);
+    return result;
   }
 
   // ── Ignition gz-transport: teleport robot ──────────────────────────────────
@@ -206,14 +295,16 @@ private:
   }
 
   // ── Ignition gz-transport: spawn entity ───────────────────────────────────
-  bool spawn_entity(const std::string & sdf_str, float x, float y, float z)
+  bool spawn_entity(const std::string & sdf_str, float x, float y, float z,
+                    float yaw = 0.0f)
   {
     ignition::msgs::EntityFactory req;
     req.set_sdf(sdf_str);
     req.mutable_pose()->mutable_position()->set_x(x);
     req.mutable_pose()->mutable_position()->set_y(y);
     req.mutable_pose()->mutable_position()->set_z(z);
-    req.mutable_pose()->mutable_orientation()->set_w(1.0);
+    req.mutable_pose()->mutable_orientation()->set_z(std::sin(yaw * 0.5f));
+    req.mutable_pose()->mutable_orientation()->set_w(std::cos(yaw * 0.5f));
 
     std::string service = "/world/" + world_name_ + "/create";
 
@@ -293,8 +384,11 @@ private:
   double min_dist_, sphere_radius_;
   float odom_x_ = 0.0f, odom_y_ = 0.0f, odom_yaw_ = 0.0f;
 
+  int  n_obstacles_;
   std::mt19937 rng_;
   bool goal_spawned_;
+  bool obs_spawned_;
+  std::vector<std::pair<float,float>> obs_xy_;
 
   ignition::transport::Node ign_node_;
 
