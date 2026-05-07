@@ -44,7 +44,7 @@ def main() -> None:
     env = TurtleBot3Env(config)
 
     if args.checkpoint:
-        model = load(args.checkpoint, env, config)
+        model = load(args.checkpoint, env, config, reset_buffer=True)
     else:
         model = build(config, env)
 

@@ -109,7 +109,12 @@ private:
 
     std::lock_guard<std::mutex> lk(mtx_);
     lidar_data_ = std::move(bins);
-    min_lidar_  = *std::min_element(lidar_data_.begin(), lidar_data_.end()) * rmax;
+    auto min_it    = std::min_element(lidar_data_.begin(), lidar_data_.end());
+    min_lidar_     = *min_it * rmax;
+    int  min_bin   = static_cast<int>(min_it - lidar_data_.begin());
+    // Angle of the closest-obstacle bin in the robot body frame (0 = forward).
+    min_lidar_angle_ = (min_bin + 0.5f) * 2.0f * static_cast<float>(M_PI)
+                       / static_cast<float>(n_lidar_bins_);
   }
 
   void on_odom(nav_msgs::msg::Odometry::ConstSharedPtr msg)
@@ -139,6 +144,8 @@ private:
     // the previous episode ending and this goal being published.
     episode_done_ = false;
     episode_done_info_.clear();
+    step_count_ = 0;
+    prev_dist_  = std::hypot(robot_x_ - goal_x_, robot_y_ - goal_y_);
     RCLCPP_INFO(get_logger(), "New goal received: odom=(%.2f,%.2f) robot_odom=(%.2f,%.2f)",
                 goal_x_, goal_y_, robot_x_, robot_y_);
   }
@@ -184,7 +191,7 @@ private:
     cmd.angular.z = av;
     cmd_vel_pub_->publish(cmd);
 
-    // 2. Sleep — other executor threads update cached sensor data meanwhile
+    // 3. Sleep — other executor threads update cached sensor data meanwhile
     std::this_thread::sleep_for(
       std::chrono::milliseconds(static_cast<int>(step_duration_ * 1000.0)));
 
@@ -195,34 +202,35 @@ private:
 
     // Belt-and-suspenders: detect done directly in case subscription message
     // arrived while the mutex was held and got queued past this read.
+    ++step_count_;
     float _dx = robot_x_ - goal_x_, _dy = robot_y_ - goal_y_;
     float _dist = std::sqrt(_dx * _dx + _dy * _dy);
-    if (_dist < static_cast<float>(goal_tolerance_)) {
-      RCLCPP_INFO(get_logger(),
-                  "Goal reached! dist=%.3f robot_odom=(%.2f,%.2f) goal_odom=(%.2f,%.2f)",
-                  _dist, robot_x_, robot_y_, goal_x_, goal_y_);
+    if (step_count_ > 1 && _dist < static_cast<float>(goal_tolerance_)) {
       episode_done_ = true;
       episode_done_info_ = "goal_reached";
-    } else if (min_lidar_ < static_cast<float>(collision_thresh_)) {
+    } else if (step_count_ > 1 && min_lidar_ < static_cast<float>(collision_thresh_)) {
       episode_done_ = true;
       episode_done_info_ = "collision";
     }
 
-    // Compute reward.
-    // lv_norm * max(0, cos_goal): forward speed counts only when facing the goal.
+    // Delta-progress reward: rewards actual movement toward the goal,
+    // not instantaneous velocity direction — detours are not penalised.
     float reward;
     if (episode_done_) {
-      reward = (episode_done_info_ == "goal_reached") ? 1.0f : -1.0f;
+      // Asymmetric: reaching the goal (+100 after Python ×100 scale) is always
+      // better than crashing (−50). Symmetric ±100 lets the robot exploit crashes
+      // to end unpromising episodes cheaply.
+      reward = (episode_done_info_ == "goal_reached") ? 1.0f : -0.5f;
     } else {
-      float r3       = std::max(0.0f, 1.35f - min_lidar_);
-      float lv_norm  = lv / static_cast<float>(max_linear_vel_);
-      float dx2      = goal_x_ - robot_x_;
-      float dy2      = goal_y_ - robot_y_;
-      float cos_goal = std::cos(std::atan2(dy2, dx2) - std::atan2(sin_yaw_, cos_yaw_));
-      reward = 0.01f * (lv_norm * std::max(0.0f, cos_goal)
-                        - std::abs(av) / 2.0f
-                        - r3 / 2.0f);
+      float progress = (prev_dist_ - _dist) / static_cast<float>(max_lidar_range_);
+      // Proximity penalty: quadratic, activates only within 0.4 m safety zone.
+      // Old threshold was 1.35 m — with obstacles at r~1.4 m the penalty fired on
+      // every step, overwhelming progress reward and trapping the robot.
+      const float safety_dist = 0.4f;
+      float danger = std::max(0.0f, safety_dist - min_lidar_) / safety_dist;
+      reward = progress - 0.1f * danger * danger;
     }
+    prev_dist_ = _dist;
 
     res->observation   = build_observation();
     res->achieved_goal = {robot_x_, robot_y_};
@@ -241,7 +249,8 @@ private:
 
   // Sensor cache
   std::vector<float> lidar_data_;
-  float min_lidar_  = 999.0f;
+  float min_lidar_       = 999.0f;
+  float min_lidar_angle_ = 0.0f;   // body-frame angle of closest obstacle bin
   float robot_x_    = 0.0f, robot_y_ = 0.0f;
   float lin_vel_    = 0.0f, ang_vel_ = 0.0f;
   float cos_yaw_    = 1.0f, sin_yaw_ = 0.0f;
@@ -250,6 +259,8 @@ private:
 
   bool  episode_done_     = false;
   std::string episode_done_info_;
+  int   step_count_       = 0;
+  float prev_dist_        = 0.0f;
 
   // Parameters
   double max_lidar_range_;

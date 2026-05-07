@@ -17,10 +17,12 @@ public:
     collision_threshold_    = declare_parameter("collision_threshold",    0.2);
     max_lidar_range_        = declare_parameter("max_lidar_range",        3.5);
     goal_tolerance_         = declare_parameter("goal_tolerance",         0.2);
-    collision_penalty_      = declare_parameter("collision_penalty",    -1.0);
+    collision_penalty_      = declare_parameter("collision_penalty",    -5.0);
     goal_reward_            = declare_parameter("goal_reward",            1.0);
     time_penalty_           = declare_parameter("time_penalty",          -0.005);
-    distance_reward_scale_  = declare_parameter("distance_reward_scale",  1.0);
+    distance_reward_scale_  = declare_parameter("distance_reward_scale",  0.1);
+    proximity_threshold_    = declare_parameter("proximity_threshold",    0.5);
+    proximity_penalty_scale_= declare_parameter("proximity_penalty_scale", 0.1);
 
     // Subscribers — LiDAR only for collision; odom for position; goal for target
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
@@ -86,17 +88,26 @@ private:
     float reward = static_cast<float>(
       -dist_norm / max_lidar_range_ * distance_reward_scale_ + time_penalty_);
 
+    // Proximity penalty — 1/d repulsive field, zero at threshold, sharp near obstacles.
+    // Disabled in the final goal-approach zone so the robot isn't penalised for
+    // closing in on a goal that was spawned near an obstacle.
+    if (dist > static_cast<float>(proximity_threshold_) &&
+        min_lidar_range_ > 0.01f &&
+        min_lidar_range_ < static_cast<float>(proximity_threshold_)) {
+      reward -= static_cast<float>(proximity_penalty_scale_) *
+                (1.0f / min_lidar_range_ -
+                 1.0f / static_cast<float>(proximity_threshold_));
+    }
+
     // Goal reached — override reward with success bonus
     if (dist < static_cast<float>(goal_tolerance_)) {
       reward = static_cast<float>(goal_reward_);
       episode_done_ = true;
     }
 
-    // Collision — override reward with collision penalty
-    if (min_lidar_range_ < static_cast<float>(collision_threshold_)) {
-      reward = static_cast<float>(collision_penalty_);
-      episode_done_ = true;
-    }
+    // No collision terminal — episode continues so the robot cannot exploit
+    // early termination. The 1/d proximity penalty already fires hard at this
+    // range (~-32/step after scaling), forcing the robot to back away.
 
     std_msgs::msg::Float32 r_msg;
     r_msg.data = reward;
@@ -118,6 +129,8 @@ private:
   double goal_reward_;
   double time_penalty_;
   double distance_reward_scale_;
+  double proximity_threshold_;
+  double proximity_penalty_scale_;
 
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr    scan_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr         odom_sub_;

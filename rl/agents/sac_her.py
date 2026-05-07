@@ -43,8 +43,14 @@ def build(config: dict, env: TurtleBot3Env) -> SAC:
     return model
 
 
-def load(checkpoint_path: str, env: TurtleBot3Env, config: dict) -> SAC:
-    """Resume training from a checkpoint."""
+def load(checkpoint_path: str, env: TurtleBot3Env, config: dict,
+         reset_buffer: bool = False) -> SAC:
+    """Resume training from a checkpoint.
+
+    reset_buffer=True drops the old replay buffer so the agent relearns
+    Q-values from scratch in the new environment (e.g. after adding obstacles),
+    while keeping the learned policy and critic weights.
+    """
     if not os.path.exists(checkpoint_path) and not os.path.exists(checkpoint_path + ".zip"):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     model = SAC.load(
@@ -52,4 +58,7 @@ def load(checkpoint_path: str, env: TurtleBot3Env, config: dict) -> SAC:
         env=env,
         custom_objects={"tensorboard_log": config["training"]["tensorboard_log"]},
     )
+    if reset_buffer:
+        model.replay_buffer.reset()
+        print("[load] Replay buffer cleared — starting fresh experience collection.")
     return model

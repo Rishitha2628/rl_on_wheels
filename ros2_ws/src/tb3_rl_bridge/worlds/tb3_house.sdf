@@ -87,7 +87,7 @@
 
     <!-- ── TurtleBot3 Waffle Pi ───────────────────────────────────────────── -->
     <model name="waffle_pi">
-      <pose>0 0 0 0 0 0</pose>
+      <pose>4.5 3.0 0 0 0 0</pose>
 
       <!-- base_footprint: virtual link at ground level, DiffDrive child frame -->
       <link name="base_footprint"/>

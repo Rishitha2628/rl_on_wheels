@@ -26,9 +26,9 @@
 using ResetEpisode = tb3_rl_bridge::srv::ResetEpisode;
 using namespace std::chrono_literals;
 
-// Box obstacle: 0.15 m deep × 1.2 m wide × 0.6 m tall.
-// Placed perpendicular to the robot→goal line so the robot must navigate around it.
-static const char * OBS_BOX_SDF = R"(
+// Small cylinder obstacle: radius 0.15 m, height 0.6 m.
+// Spawned at a random position each episode via gz-transport.
+static const char * OBS_CYLINDER_SDF = R"(
 <?xml version='1.0'?>
 <sdf version='1.8'>
   <model name='%NAME%'>
@@ -36,10 +36,10 @@ static const char * OBS_BOX_SDF = R"(
     <link name='link'>
       <pose>0 0 0.3 0 0 0</pose>
       <collision name='col'>
-        <geometry><box><size>0.15 1.2 0.6</size></box></geometry>
+        <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
       </collision>
       <visual name='vis'>
-        <geometry><box><size>0.15 1.2 0.6</size></box></geometry>
+        <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
         <material><ambient>0.4 0.2 0.1 1</ambient><diffuse>0.4 0.2 0.1 1</diffuse></material>
       </visual>
     </link>
@@ -80,6 +80,9 @@ public:
     sphere_radius_ = declare_parameter("goal_sphere_radius",  0.1);
     world_name_    = declare_parameter("world_name", std::string("empty"));
     n_obstacles_   = declare_parameter("n_obstacles", 0);
+    // Fraction of episodes where robot spawns inside the obstacle ring and goal
+    // outside it, guaranteeing a blocked direct path. 0.3 = 30% hard episodes.
+    p_blocked_     = declare_parameter("p_blocked_episodes", 0.3);
 
     // Reentrant group so the odom callback can fire while the service
     // handler is sleeping after a teleport.
@@ -124,6 +127,9 @@ private:
   void handle_reset(ResetEpisode::Request::ConstSharedPtr req,
                     ResetEpisode::Response::SharedPtr     res)
   {
+    RCLCPP_INFO(get_logger(), "handle_reset called. n_obstacles=%d random_pose=%d",
+                n_obstacles_, req->random_pose);
+
     float rx, ry, rtheta, gx, gy;
     std::vector<XY>    obs_pos;
     std::vector<float> obs_yaw;
@@ -199,46 +205,83 @@ private:
   using XY = std::pair<float, float>;
   static std::string obs_name(int i) { return "dyn_obs_" + std::to_string(i); }
 
-  // Robot spawns on one side, goal on the other, box obstacle between them.
+  // Samples robot, goal, and (optionally) dynamic obstacle poses for one episode.
+  // 30% of episodes are "blocked": robot near arena center (inside obstacle ring),
+  // goal outside the ring, so the direct path is almost always obstructed.
+  // The remaining 70% use unconstrained random sampling for easy wins that keep
+  // the policy anchored on goal-seeking.
   void sample_all_poses(float & rx, float & ry, float & rtheta,
                         float & gx, float & gy,
                         std::vector<XY> & obs_pos, std::vector<float> & obs_yaw)
   {
-    std::uniform_real_distribution<float> dxy(x_min_, x_max_);
-    std::uniform_real_distribution<float> ddir(-M_PI, M_PI);
-    std::uniform_real_distribution<float> d1_dist(0.7f, 1.1f);
-    std::uniform_real_distribution<float> d2_dist(0.7f, 1.1f);
+    obs_pos.clear();
+    obs_yaw.clear();
 
+    static const std::array<XY, 6> cylinders = {
+      XY{ 0.0f,  1.4f},
+      XY{ 1.2f,  0.7f},
+      XY{ 1.2f, -0.7f},
+      XY{ 0.0f, -1.4f},
+      XY{-1.2f, -0.7f},
+      XY{-1.2f,  0.7f},
+    };
+    const float clearance = 0.55f;
+
+    auto too_close = [&](float x, float y) {
+      for (auto & c : cylinders)
+        if (std::hypot(x - c.first, y - c.second) < clearance) return true;
+      return false;
+    };
+
+    std::uniform_real_distribution<float> dxy(
+      static_cast<float>(x_min_) + 0.2f,
+      static_cast<float>(x_max_) - 0.2f);
+    std::uniform_real_distribution<float> dtheta(-M_PI, M_PI);
+    std::uniform_real_distribution<float> dunif(0.0f, 1.0f);
+
+    rtheta = dtheta(rng_);
+
+    if (dunif(rng_) < static_cast<float>(p_blocked_)) {
+      // Blocked-path episode: robot inside the obstacle ring (r < 0.4 m from
+      // arena center), goal outside it (r in [1.5, 1.85] m). Obstacles sit at
+      // r ≈ 1.3–1.4 m so the straight-line path is obstructed ~90% of the time
+      // regardless of goal angle. Both positions are clear by construction:
+      // inner robots are >1.0 m from all obstacles; outer goals are >0.85 m away.
+      std::uniform_real_distribution<float> r_robot(0.0f, 0.40f);
+      std::uniform_real_distribution<float> r_goal(1.50f, 1.85f);
+      float ar = dtheta(rng_);
+      float rr = r_robot(rng_);
+      rx = rr * std::cos(ar);
+      ry = rr * std::sin(ar);
+      float ag = dtheta(rng_);
+      float rg = r_goal(rng_);
+      gx = rg * std::cos(ag);
+      gy = rg * std::sin(ag);
+      return;
+    }
+
+    // Random placement with clearance from static obstacles and minimum
+    // robot-to-goal distance to ensure non-trivial episodes.
     int tries = 0;
     do {
-      rx         = dxy(rng_); ry = dxy(rng_);
-      float dir  = ddir(rng_);
-      float d1   = d1_dist(rng_);   // robot → obstacle
-      float d2   = d2_dist(rng_);   // obstacle → goal
-      float ox   = rx + d1 * std::cos(dir);
-      float oy   = ry + d1 * std::sin(dir);
-      gx         = std::clamp(ox + d2 * std::cos(dir),
-                              static_cast<float>(x_min_), static_cast<float>(x_max_));
-      gy         = std::clamp(oy + d2 * std::sin(dir),
-                              static_cast<float>(y_min_), static_cast<float>(y_max_));
-      obs_pos    = {{ox, oy}};
-      obs_yaw    = {dir + static_cast<float>(M_PI_2)};
-    } while (++tries < 200 &&
-             std::hypot(gx - rx, gy - ry) < static_cast<float>(min_dist_));
-
-    rtheta = std::atan2(gy - ry, gx - rx);
-
-    if (n_obstacles_ == 0) { obs_pos.clear(); obs_yaw.clear(); }
+      rx = dxy(rng_); ry = dxy(rng_);
+      gx = dxy(rng_); gy = dxy(rng_);
+    } while (++tries < 300 &&
+             (too_close(rx, ry) || too_close(gx, gy) ||
+              std::hypot(rx - gx, ry - gy) < static_cast<float>(min_dist_)));
   }
 
   void spawn_all_obstacles(const std::vector<XY> & poses,
                            const std::vector<float> & yaws)
   {
     for (int i = 0; i < static_cast<int>(poses.size()); ++i) {
-      std::string sdf(OBS_BOX_SDF);
+      std::string sdf(OBS_CYLINDER_SDF);
       auto p = sdf.find("%NAME%");
       if (p != std::string::npos) sdf.replace(p, 6, obs_name(i));
-      spawn_entity(sdf, poses[i].first, poses[i].second, 0.0f, yaws[i]);
+      bool ok = spawn_entity(sdf, poses[i].first, poses[i].second, 0.0f, yaws[i]);
+      RCLCPP_INFO(get_logger(), "Spawn %s at (%.2f,%.2f) yaw=%.2f: %s",
+                  obs_name(i).c_str(), poses[i].first, poses[i].second,
+                  yaws[i], ok ? "OK" : "FAILED");
     }
     obs_spawned_ = true;
   }
@@ -384,7 +427,8 @@ private:
   double min_dist_, sphere_radius_;
   float odom_x_ = 0.0f, odom_y_ = 0.0f, odom_yaw_ = 0.0f;
 
-  int  n_obstacles_;
+  int    n_obstacles_;
+  double p_blocked_;
   std::mt19937 rng_;
   bool goal_spawned_;
   bool obs_spawned_;

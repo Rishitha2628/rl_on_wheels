@@ -77,9 +77,100 @@
       </link>
     </model>
 
+    <!-- ── Static cylinder obstacles (6 total, hexagonal spread ~1.4 m radius) ── -->
+    <model name="cylinder_obs_0">
+      <static>true</static>
+      <pose>0 1.4 0 0 0 0</pose>
+      <link name="link">
+        <pose>0 0 0.3 0 0 0</pose>
+        <collision name="col">
+          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
+        </collision>
+        <visual name="vis">
+          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
+          <material><ambient>0.6 0.3 0.1 1</ambient><diffuse>0.6 0.3 0.1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="cylinder_obs_1">
+      <static>true</static>
+      <pose>1.2 0.7 0 0 0 0</pose>
+      <link name="link">
+        <pose>0 0 0.3 0 0 0</pose>
+        <collision name="col">
+          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
+        </collision>
+        <visual name="vis">
+          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
+          <material><ambient>0.6 0.3 0.1 1</ambient><diffuse>0.6 0.3 0.1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="cylinder_obs_2">
+      <static>true</static>
+      <pose>1.2 -0.7 0 0 0 0</pose>
+      <link name="link">
+        <pose>0 0 0.3 0 0 0</pose>
+        <collision name="col">
+          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
+        </collision>
+        <visual name="vis">
+          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
+          <material><ambient>0.6 0.3 0.1 1</ambient><diffuse>0.6 0.3 0.1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="cylinder_obs_3">
+      <static>true</static>
+      <pose>0 -1.4 0 0 0 0</pose>
+      <link name="link">
+        <pose>0 0 0.3 0 0 0</pose>
+        <collision name="col">
+          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
+        </collision>
+        <visual name="vis">
+          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
+          <material><ambient>0.6 0.3 0.1 1</ambient><diffuse>0.6 0.3 0.1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="cylinder_obs_4">
+      <static>true</static>
+      <pose>-1.2 -0.7 0 0 0 0</pose>
+      <link name="link">
+        <pose>0 0 0.3 0 0 0</pose>
+        <collision name="col">
+          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
+        </collision>
+        <visual name="vis">
+          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
+          <material><ambient>0.6 0.3 0.1 1</ambient><diffuse>0.6 0.3 0.1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="cylinder_obs_5">
+      <static>true</static>
+      <pose>-1.2 0.7 0 0 0 0</pose>
+      <link name="link">
+        <pose>0 0 0.3 0 0 0</pose>
+        <collision name="col">
+          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
+        </collision>
+        <visual name="vis">
+          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
+          <material><ambient>0.6 0.3 0.1 1</ambient><diffuse>0.6 0.3 0.1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
     <!-- ── TurtleBot3 Waffle Pi ───────────────────────────────────────────── -->
     <model name="waffle_pi">
-      <pose>0 0 0 0 0 0</pose>
+      <pose>-1 0 0 0 0 0</pose>
 
       <!-- base_footprint: virtual link at ground level, DiffDrive child frame -->
       <link name="base_footprint"/>

@@ -121,7 +121,8 @@ def generate_launch_description():
                 "world_y_max":  2.0,
                 "robot_min_goal_dist": 0.5,
                 "goal_sphere_radius": 0.1,
-                "n_obstacles": 1,
+                "n_obstacles": 0,
+                "p_blocked_episodes": 0.6,
             }],
         ),
     ])
