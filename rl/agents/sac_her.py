@@ -56,7 +56,10 @@ def load(checkpoint_path: str, env: TurtleBot3Env, config: dict,
     model = SAC.load(
         checkpoint_path,
         env=env,
-        custom_objects={"tensorboard_log": config["training"]["tensorboard_log"]},
+        custom_objects={
+            "tensorboard_log": config["training"]["tensorboard_log"],
+            "gradient_steps":  int(config["sac"]["gradient_steps"]),
+        },
     )
     if reset_buffer:
         model.replay_buffer.reset()
