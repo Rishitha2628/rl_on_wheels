@@ -222,10 +222,36 @@ private:
       const float safety_dist = 0.5f;
       float curr_danger = std::max(0.0f, safety_dist - min_lidar_) / safety_dist;
       float prev_danger = std::max(0.0f, safety_dist - prev_min_lidar_) / safety_dist;
-      // delta_danger > 0 when robot moves away from obstacle (avoidance maneuver).
-      // This rewards the ACT of steering clear, not just penalises proximity.
       float delta_danger = prev_danger - curr_danger;
-      reward = progress + 0.3f * delta_danger - 0.1f * curr_danger * curr_danger;
+
+      // Penalty for obstacle blocking the goal direction, active from 1.0m.
+      // Fires earlier than the proximity penalty (0.5m) so the robot gets a
+      // signal before it's already committed to a collision course.
+      float goal_dx = -_dx, goal_dy = -_dy;
+      float goal_angle_world = std::atan2(goal_dy, goal_dx);
+      float yaw = std::atan2(sin_yaw_, cos_yaw_);
+      float goal_angle_body = std::fmod(
+        goal_angle_world - yaw + 2.0f * static_cast<float>(M_PI),
+        2.0f * static_cast<float>(M_PI));
+      int goal_bin = static_cast<int>(
+        goal_angle_body / (2.0f * static_cast<float>(M_PI)) * n_lidar_bins_)
+        % n_lidar_bins_;
+      const float path_clear_dist = 1.0f;
+      const int half_window = 2;  // ±2 bins = ±20° at 36 bins
+      float min_path_dist = static_cast<float>(max_lidar_range_);
+      for (int b = -half_window; b <= half_window; ++b) {
+        int bin = (goal_bin + b + n_lidar_bins_) % n_lidar_bins_;
+        min_path_dist = std::min(min_path_dist,
+          lidar_data_[bin] * static_cast<float>(max_lidar_range_));
+      }
+      float path_penalty = 0.0f;
+      if (min_path_dist < path_clear_dist) {
+        path_penalty = 0.3f * (1.0f - min_path_dist / path_clear_dist);
+      }
+
+      reward = progress + 0.3f * delta_danger
+               - 0.1f * curr_danger * curr_danger
+               - path_penalty;
     }
     prev_dist_     = _dist;
     prev_min_lidar_ = min_lidar_;
