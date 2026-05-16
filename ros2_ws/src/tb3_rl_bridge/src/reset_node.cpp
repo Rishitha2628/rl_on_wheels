@@ -242,21 +242,36 @@ private:
     rtheta = dtheta(rng_);
 
     if (dunif(rng_) < static_cast<float>(p_blocked_)) {
-      // Blocked-path episode: robot inside the obstacle ring (r < 0.4 m from
-      // arena center), goal outside it (r in [1.5, 1.85] m). Obstacles sit at
-      // r ≈ 1.3–1.4 m so the straight-line path is obstructed ~90% of the time
-      // regardless of goal angle. Both positions are clear by construction:
-      // inner robots are >1.0 m from all obstacles; outer goals are >0.85 m away.
+      // Guaranteed-blocked episode: pick one cylinder at random and place the
+      // goal just behind it. The goal angle is offset by ±5° from the cylinder's
+      // angle — small enough that the cylinder (angular shadow ±6.2° from center)
+      // still lies on the direct robot-to-goal line, so the robot cannot reach
+      // the goal without navigating around the obstacle.
+      std::uniform_int_distribution<int> cyl_dist(0, 5);
+      int ci = cyl_dist(rng_);
+      float cyl_angle = std::atan2(cylinders[ci].second, cylinders[ci].first);
+
+      // Robot near arena center (well inside the ring).
       std::uniform_real_distribution<float> r_robot(0.0f, 0.40f);
-      std::uniform_real_distribution<float> r_goal(1.50f, 1.85f);
       float ar = dtheta(rng_);
-      float rr = r_robot(rng_);
-      rx = rr * std::cos(ar);
-      ry = rr * std::sin(ar);
-      float ag = dtheta(rng_);
-      float rg = r_goal(rng_);
-      gx = rg * std::cos(ag);
-      gy = rg * std::sin(ag);
+      rx = r_robot(rng_) * std::cos(ar);
+      ry = r_robot(rng_) * std::sin(ar);
+
+      // Goal behind the selected cylinder — reject if still too close to any obstacle.
+      std::uniform_real_distribution<float> r_goal(1.85f, 1.95f);
+      std::uniform_real_distribution<float> ang_noise(-0.087f, 0.087f); // ±5°
+      auto goal_too_close = [&](float x, float y) {
+        for (auto& c : cylinders)
+          if (std::hypot(x - c.first, y - c.second) < 0.55f) return true;
+        return false;
+      };
+      int goal_tries = 0;
+      do {
+        float ag = cyl_angle + ang_noise(rng_);
+        float rg = r_goal(rng_);
+        gx = rg * std::cos(ag);
+        gy = rg * std::sin(ag);
+      } while (++goal_tries < 100 && goal_too_close(gx, gy));
       return;
     }
 

@@ -122,7 +122,7 @@ def generate_launch_description():
                 "robot_min_goal_dist": 0.5,
                 "goal_sphere_radius": 0.1,
                 "n_obstacles": 0,
-                "p_blocked_episodes": 0.6,
+                "p_blocked_episodes": 0.8,
             }],
         ),
     ])

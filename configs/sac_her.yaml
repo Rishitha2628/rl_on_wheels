@@ -5,7 +5,7 @@ sac:
   tau: 0.005
   gamma: 0.99          # 0.95 was too low — with max 600 steps the agent couldn't see the goal reward
   train_freq: 1
-  gradient_steps: 2
+  gradient_steps: 1
   ent_coef: "auto"     # learnable temperature
   # SB3 default target_entropy=-2 assumes symmetric [-1,1] actions.
   # Our [0, max_lv] x [-max_av, max_av] space shifts log_prob by +2.73,

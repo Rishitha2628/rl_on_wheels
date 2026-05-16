@@ -25,6 +25,8 @@ def parse_args() -> argparse.Namespace:
                    help="Path to sac_her.yaml")
     p.add_argument("--checkpoint", default=None,
                    help="Resume from checkpoint path")
+    p.add_argument("--reset-buffer", action="store_true",
+                   help="Clear replay buffer when resuming (use after reward/env changes)")
     return p.parse_args()
 
 
@@ -44,7 +46,7 @@ def main() -> None:
     env = TurtleBot3Env(config)
 
     if args.checkpoint:
-        model = load(args.checkpoint, env, config, reset_buffer=True)
+        model = load(args.checkpoint, env, config, reset_buffer=args.reset_buffer)
     else:
         model = build(config, env)
 

@@ -144,8 +144,9 @@ private:
     // the previous episode ending and this goal being published.
     episode_done_ = false;
     episode_done_info_.clear();
-    step_count_ = 0;
-    prev_dist_  = std::hypot(robot_x_ - goal_x_, robot_y_ - goal_y_);
+    step_count_    = 0;
+    prev_dist_     = std::hypot(robot_x_ - goal_x_, robot_y_ - goal_y_);
+    prev_min_lidar_ = min_lidar_;
     RCLCPP_INFO(get_logger(), "New goal received: odom=(%.2f,%.2f) robot_odom=(%.2f,%.2f)",
                 goal_x_, goal_y_, robot_x_, robot_y_);
   }
@@ -213,24 +214,21 @@ private:
       episode_done_info_ = "collision";
     }
 
-    // Delta-progress reward: rewards actual movement toward the goal,
-    // not instantaneous velocity direction — detours are not penalised.
     float reward;
     if (episode_done_) {
-      // Asymmetric: reaching the goal (+100 after Python ×100 scale) is always
-      // better than crashing (−50). Symmetric ±100 lets the robot exploit crashes
-      // to end unpromising episodes cheaply.
       reward = (episode_done_info_ == "goal_reached") ? 1.0f : -0.5f;
     } else {
       float progress = (prev_dist_ - _dist) / static_cast<float>(max_lidar_range_);
-      // Proximity penalty: quadratic, activates only within 0.4 m safety zone.
-      // Old threshold was 1.35 m — with obstacles at r~1.4 m the penalty fired on
-      // every step, overwhelming progress reward and trapping the robot.
-      const float safety_dist = 0.4f;
-      float danger = std::max(0.0f, safety_dist - min_lidar_) / safety_dist;
-      reward = progress - 0.1f * danger * danger;
+      const float safety_dist = 0.5f;
+      float curr_danger = std::max(0.0f, safety_dist - min_lidar_) / safety_dist;
+      float prev_danger = std::max(0.0f, safety_dist - prev_min_lidar_) / safety_dist;
+      // delta_danger > 0 when robot moves away from obstacle (avoidance maneuver).
+      // This rewards the ACT of steering clear, not just penalises proximity.
+      float delta_danger = prev_danger - curr_danger;
+      reward = progress + 0.3f * delta_danger - 0.1f * curr_danger * curr_danger;
     }
-    prev_dist_ = _dist;
+    prev_dist_     = _dist;
+    prev_min_lidar_ = min_lidar_;
 
     res->observation   = build_observation();
     res->achieved_goal = {robot_x_, robot_y_};
@@ -261,6 +259,7 @@ private:
   std::string episode_done_info_;
   int   step_count_       = 0;
   float prev_dist_        = 0.0f;
+  float prev_min_lidar_   = 999.0f;
 
   // Parameters
   double max_lidar_range_;
