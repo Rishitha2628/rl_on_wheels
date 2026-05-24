@@ -14,13 +14,11 @@ def build(config: dict, env: TurtleBot3Env) -> SAC:
     sac = config["sac"]
     trn = config["training"]
 
-    # SB3 default target_entropy = -action_dim = -2 is calibrated for symmetric
-    # [-1,1] action spaces.  Our [0, max_lv] x [-max_av, max_av] space adds
-    # offset = -log(max_lv/2) - log(max_av) ≈ +2.73 to log_prob, which shifts
-    # the equilibrium entropy from 2 nats down to 0.73 nats (near-deterministic).
-    # Correcting: target_entropy = -(desired_entropy + offset - 2) = -0.73 gives
-    # ~2 nats, matching standard SAC behaviour on symmetric spaces.
-    target_entropy = float(sac.get("target_entropy", -0.73))
+    # SB3 computes log_prob in the pre-rescale tanh-squashed [-1,1] space, so
+    # default target_entropy = -action_dim = -2 is the right baseline regardless
+    # of the actual action bounds. "auto" lets SB3 set this internally.
+    te = sac.get("target_entropy", "auto")
+    target_entropy = te if isinstance(te, str) else float(te)
 
     model = SAC(
         policy                 = "MlpPolicy",
@@ -56,11 +54,10 @@ def load(checkpoint_path: str, env: TurtleBot3Env, config: dict,
     model = SAC.load(
         checkpoint_path,
         env=env,
-        custom_objects={
-            "tensorboard_log": config["training"]["tensorboard_log"],
-            "gradient_steps":  int(config["sac"]["gradient_steps"]),
-        },
+        custom_objects={"tensorboard_log": config["training"]["tensorboard_log"]},
     )
+    # custom_objects doesn't reliably override integer hyperparams — set directly
+    model.gradient_steps = int(config["sac"]["gradient_steps"])
     if reset_buffer:
         model.replay_buffer.reset()
         print("[load] Replay buffer cleared — starting fresh experience collection.")

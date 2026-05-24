@@ -38,12 +38,10 @@ rosidl_get_typesupport_target(cpp_typesupport_target
 add_executable(env_bridge_node src/env_bridge_node.cpp)
 ament_target_dependencies(env_bridge_node
   rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs)
-target_link_libraries(env_bridge_node "${cpp_typesupport_target}")
-
-# ── reward_node ───────────────────────────────────────────────────────────────
-add_executable(reward_node src/reward_node.cpp)
-ament_target_dependencies(reward_node
-  rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs)
+target_link_libraries(env_bridge_node
+  "${cpp_typesupport_target}"
+  ignition-transport11::core
+  ignition-msgs8::core)
 
 # ── reset_node ────────────────────────────────────────────────────────────────
 add_executable(reset_node src/reset_node.cpp)
@@ -54,15 +52,22 @@ target_link_libraries(reset_node
   ignition-transport11::core
   ignition-msgs8::core)
 
+# ── dynamic_obstacle_node ─────────────────────────────────────────────────────
+add_executable(dynamic_obstacle_node src/dynamic_obstacle_node.cpp)
+ament_target_dependencies(dynamic_obstacle_node rclcpp geometry_msgs)
+target_link_libraries(dynamic_obstacle_node
+  ignition-transport11::core
+  ignition-msgs8::core)
+
 # ── install ───────────────────────────────────────────────────────────────────
 install(TARGETS
   env_bridge_node
-  reward_node
   reset_node
+  dynamic_obstacle_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(DIRECTORY launch worlds
+install(DIRECTORY launch worlds tools
   DESTINATION share/${PROJECT_NAME}
 )
 

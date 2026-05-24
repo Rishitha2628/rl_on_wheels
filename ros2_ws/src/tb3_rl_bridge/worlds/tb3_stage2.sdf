@@ -1,6 +1,6 @@
 <?xml version="1.0" ?>
 <!--
-  Ignition Fortress world — empty environment with TurtleBot3 Waffle Pi.
+  Ignition Fortress world — drlnav-style stage (auto-generated).
   Robot is spawned here permanently; reset_node teleports it each episode.
   Goal marker sphere is spawned/deleted each episode via gz-transport.
 -->
@@ -77,168 +77,110 @@
       </link>
     </model>
 
-    <!-- ── Static cylinder obstacles (3 total — sparse triangle) ── -->
-    <model name="cylinder_obs_0">
+    <!-- ── drlnav outer walls (5x5 arena, walls at ±2.425) ── -->
+    <model name="outer_wall_1">
       <static>true</static>
-      <pose>1.0 0 0 0 0 0</pose>
+      <pose>-2.425 0 0 0 0 1.5708</pose>
       <link name="link">
-        <pose>0 0 0.3 0 0 0</pose>
+        <collision name="col"><pose>0 0 0.25 0 0 0</pose>
+          <geometry><box><size>5 0.15 0.5</size></box></geometry></collision>
+        <visual name="vis"><pose>0 0 0.25 0 0 0</pose>
+          <geometry><box><size>5 0.15 0.5</size></box></geometry>
+          <material><ambient>0.6 0.4 0.2 1</ambient><diffuse>0.6 0.4 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="outer_wall_2">
+      <static>true</static>
+      <pose>0 2.425 0 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><pose>0 0 0.25 0 0 0</pose>
+          <geometry><box><size>5 0.15 0.5</size></box></geometry></collision>
+        <visual name="vis"><pose>0 0 0.25 0 0 0</pose>
+          <geometry><box><size>5 0.15 0.5</size></box></geometry>
+          <material><ambient>0.6 0.4 0.2 1</ambient><diffuse>0.6 0.4 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="outer_wall_3">
+      <static>true</static>
+      <pose>2.425 0 0 0 0 -1.5708</pose>
+      <link name="link">
+        <collision name="col"><pose>0 0 0.25 0 0 0</pose>
+          <geometry><box><size>5 0.15 0.5</size></box></geometry></collision>
+        <visual name="vis"><pose>0 0 0.25 0 0 0</pose>
+          <geometry><box><size>5 0.15 0.5</size></box></geometry>
+          <material><ambient>0.6 0.4 0.2 1</ambient><diffuse>0.6 0.4 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="outer_wall_4">
+      <static>true</static>
+      <pose>0 -2.425 0 0 0 3.14159</pose>
+      <link name="link">
+        <collision name="col"><pose>0 0 0.25 0 0 0</pose>
+          <geometry><box><size>5 0.15 0.5</size></box></geometry></collision>
+        <visual name="vis"><pose>0 0 0.25 0 0 0</pose>
+          <geometry><box><size>5 0.15 0.5</size></box></geometry>
+          <material><ambient>0.6 0.4 0.2 1</ambient><diffuse>0.6 0.4 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <!-- ── drlnav static obstacles (4 cylinders) ── -->
+    <model name="static_obs_1">
+      <static>true</static>
+      <pose>-1 -1 0 0 0 0</pose>
+      <link name="link"><pose>0 0 0.25 0 0 0</pose>
         <collision name="col">
-          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
-        </collision>
+          <geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry></collision>
         <visual name="vis">
-          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
-          <material><ambient>0.6 0.3 0.1 1</ambient><diffuse>0.6 0.3 0.1 1</diffuse></material>
+          <geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry>
+          <material><ambient>0.9 0.9 0.9 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material>
         </visual>
       </link>
     </model>
-
-    <model name="cylinder_obs_1">
+    <model name="static_obs_2">
       <static>true</static>
-      <pose>-0.5 0.9 0 0 0 0</pose>
-      <link name="link">
-        <pose>0 0 0.3 0 0 0</pose>
+      <pose>-1 1 0 0 0 0</pose>
+      <link name="link"><pose>0 0 0.25 0 0 0</pose>
         <collision name="col">
-          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
-        </collision>
+          <geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry></collision>
         <visual name="vis">
-          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
-          <material><ambient>0.6 0.3 0.1 1</ambient><diffuse>0.6 0.3 0.1 1</diffuse></material>
+          <geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry>
+          <material><ambient>0.9 0.9 0.9 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material>
         </visual>
       </link>
     </model>
-
-    <model name="cylinder_obs_2">
+    <model name="static_obs_3">
       <static>true</static>
-      <pose>-0.5 -0.9 0 0 0 0</pose>
-      <link name="link">
-        <pose>0 0 0.3 0 0 0</pose>
+      <pose>1 -1 0 0 0 0</pose>
+      <link name="link"><pose>0 0 0.25 0 0 0</pose>
         <collision name="col">
-          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
-        </collision>
+          <geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry></collision>
         <visual name="vis">
-          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
-          <material><ambient>0.6 0.3 0.1 1</ambient><diffuse>0.6 0.3 0.1 1</diffuse></material>
+          <geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry>
+          <material><ambient>0.9 0.9 0.9 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material>
         </visual>
       </link>
     </model>
-
-    <model name="cylinder_obs_3">
+    <model name="static_obs_4">
       <static>true</static>
-      <pose>0.5 0.9 0 0 0 0</pose>
-      <link name="link">
-        <pose>0 0 0.3 0 0 0</pose>
+      <pose>1 1 0 0 0 0</pose>
+      <link name="link"><pose>0 0 0.25 0 0 0</pose>
         <collision name="col">
-          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
-        </collision>
+          <geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry></collision>
         <visual name="vis">
-          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
-          <material><ambient>0.6 0.3 0.1 1</ambient><diffuse>0.6 0.3 0.1 1</diffuse></material>
+          <geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry>
+          <material><ambient>0.9 0.9 0.9 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material>
         </visual>
       </link>
     </model>
-
-    <model name="cylinder_obs_4">
-      <static>true</static>
-      <pose>0.5 -0.9 0 0 0 0</pose>
-      <link name="link">
-        <pose>0 0 0.3 0 0 0</pose>
-        <collision name="col">
-          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
-        </collision>
-        <visual name="vis">
-          <geometry><cylinder><radius>0.15</radius><length>0.6</length></cylinder></geometry>
-          <material><ambient>0.6 0.3 0.1 1</ambient><diffuse>0.6 0.3 0.1 1</diffuse></material>
-        </visual>
-      </link>
-    </model>
-
-    <!-- ── Dynamic obstacles (moved kinematically by dynamic_obstacle_node) ── -->
-    <model name="moving_obs_0">
-      <static>true</static>
-      <pose>0 -1.4 0 0 0 0</pose>
-      <link name="link">
-        <pose>0 0 0.3 0 0 0</pose>
-        <collision name="col">
-          <geometry><cylinder><radius>0.16</radius><length>0.6</length></cylinder></geometry>
-        </collision>
-        <visual name="vis">
-          <geometry><cylinder><radius>0.16</radius><length>0.6</length></cylinder></geometry>
-          <material><ambient>0.1 0.4 0.7 1</ambient><diffuse>0.1 0.4 0.7 1</diffuse></material>
-        </visual>
-      </link>
-    </model>
-
-    <model name="moving_obs_1">
-      <static>true</static>
-      <pose>0 1.4 0 0 0 0</pose>
-      <link name="link">
-        <pose>0 0 0.3 0 0 0</pose>
-        <collision name="col">
-          <geometry><cylinder><radius>0.16</radius><length>0.6</length></cylinder></geometry>
-        </collision>
-        <visual name="vis">
-          <geometry><cylinder><radius>0.16</radius><length>0.6</length></cylinder></geometry>
-          <material><ambient>0.1 0.4 0.7 1</ambient><diffuse>0.1 0.4 0.7 1</diffuse></material>
-        </visual>
-      </link>
-    </model>
-
-    <!-- ── Arena walls (4 sides at ±2.2 m, 0.1 m thick, 0.4 m tall) ── -->
-    <model name="wall_north">
-      <static>true</static>
-      <pose>0 2.2 0.2 0 0 0</pose>
-      <link name="link">
-        <collision name="col"><geometry><box><size>4.5 0.1 0.4</size></box></geometry></collision>
-        <visual name="vis">
-          <geometry><box><size>4.5 0.1 0.4</size></box></geometry>
-          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
-        </visual>
-      </link>
-    </model>
-
-    <model name="wall_south">
-      <static>true</static>
-      <pose>0 -2.2 0.2 0 0 0</pose>
-      <link name="link">
-        <collision name="col"><geometry><box><size>4.5 0.1 0.4</size></box></geometry></collision>
-        <visual name="vis">
-          <geometry><box><size>4.5 0.1 0.4</size></box></geometry>
-          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
-        </visual>
-      </link>
-    </model>
-
-    <model name="wall_east">
-      <static>true</static>
-      <pose>2.2 0 0.2 0 0 0</pose>
-      <link name="link">
-        <collision name="col"><geometry><box><size>0.1 4.5 0.4</size></box></geometry></collision>
-        <visual name="vis">
-          <geometry><box><size>0.1 4.5 0.4</size></box></geometry>
-          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
-        </visual>
-      </link>
-    </model>
-
-    <model name="wall_west">
-      <static>true</static>
-      <pose>-2.2 0 0.2 0 0 0</pose>
-      <link name="link">
-        <collision name="col"><geometry><box><size>0.1 4.5 0.4</size></box></geometry></collision>
-        <visual name="vis">
-          <geometry><box><size>0.1 4.5 0.4</size></box></geometry>
-          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
-        </visual>
-      </link>
-    </model>
-
     <!-- ── TurtleBot3 Waffle Pi ───────────────────────────────────────────── -->
     <model name="waffle_pi">
       <!-- Initial spawn — matches reset_node's fixed_spawn target so the
            robot doesn't sit inside inner_wall_7 (vertical at x=-1.2) on
            world load. reset_node teleports here every reset anyway. -->
-      <pose>-0.7 0 0 0 0 0</pose>
+      <pose>0.0 0.0 0 0 0 0.0</pose>
 
       <!-- base_footprint: virtual link at ground level, DiffDrive child frame -->
       <link name="base_footprint"/>
@@ -458,5 +400,6 @@
 
     </model>
 
+  
   </world>
 </sdf>

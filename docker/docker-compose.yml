@@ -25,10 +25,16 @@ services:
     environment:
       <<: *ros-env
       HEADLESS: "${HEADLESS:-0}"
+      STAGE: "${STAGE:-4}"     # drlnav stage 1-10
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ../ros2_ws/src:/ros2_ws/src
       - ../configs:/configs:ro
+      - ../scripts:/scripts:ro            # launch_sim.sh lives here
+      - ../rl:/rl:ro                       # so `docker exec` can run training
+      - ../checkpoints:/checkpoints       # checkpoints written here
+      - ../logs:/logs                      # tensorboard logs here
+      - tb3_install:/ros2_ws/install     # persisted colcon build output
     network_mode: host
     ipc: host
     command: /scripts/launch_sim.sh
@@ -61,6 +67,34 @@ services:
     deploy:
       resources: *gpu-resources
 
+  train_td3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      <<: *ros-env
+      PYTHONPATH: "/rl"
+      CONFIG: "/configs/td3.yaml"
+      CHECKPOINT: "${CHECKPOINT:-}"
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ../rl:/rl:ro
+      - ../configs:/configs:ro
+      - ../checkpoints:/checkpoints
+      - ../logs:/logs
+    network_mode: host
+    ipc: host
+    command: >
+      bash -lc 'python3 /rl/train_td3.py
+        --config "$$CONFIG"
+        $${CHECKPOINT:+--checkpoint "$$CHECKPOINT"}'
+    depends_on:
+      - sim
+    ports:
+      - "6007:6006"    # TensorBoard (TD3) — separate from SAC's 6006
+    deploy:
+      resources: *gpu-resources
+
   eval:
     build:
       context: ..
@@ -83,3 +117,6 @@ services:
       - sim
     deploy:
       resources: *gpu-resources
+
+volumes:
+  tb3_install:    # persists /ros2_ws/install across container restarts

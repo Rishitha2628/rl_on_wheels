@@ -80,9 +80,22 @@ public:
     sphere_radius_ = declare_parameter("goal_sphere_radius",  0.1);
     world_name_    = declare_parameter("world_name", std::string("empty"));
     n_obstacles_   = declare_parameter("n_obstacles", 0);
-    // Fraction of episodes where robot spawns inside the obstacle ring and goal
-    // outside it, guaranteeing a blocked direct path. 0.3 = 30% hard episodes.
-    p_blocked_     = declare_parameter("p_blocked_episodes", 0.3);
+
+    // drlnav-style: fixed robot spawn each episode, random goal only.
+    // Default values match drlnav's stage SDFs (robot at -0.7, 0, facing +x).
+    // Set fixed_spawn:=false to revert to random robot spawn.
+    fixed_spawn_   = declare_parameter("fixed_spawn",  true);
+    spawn_x_       = declare_parameter("spawn_x",     -0.7);
+    spawn_y_       = declare_parameter("spawn_y",      0.0);
+    spawn_theta_   = declare_parameter("spawn_theta",  0.0);
+
+    // drlnav goal-validity parameters
+    //   ARENA_LENGTH = 4.2 → arena bounds ±2.1
+    //   NO_GOAL_SPAWN_MARGIN = 0.3 inflates each inner-wall rectangle.
+    arena_length_  = declare_parameter("arena_length", 4.2);
+    arena_width_   = declare_parameter("arena_width",  4.2);
+    stage_num_     = declare_parameter("stage",        1);
+    build_obstacle_rectangles(stage_num_);
 
     // Reentrant group so the odom callback can fire while the service
     // handler is sleeping after a teleport.
@@ -119,16 +132,53 @@ public:
     // Delete any leftover goal_marker from a previous run
     delete_entity("goal_marker");
 
-    RCLCPP_INFO(get_logger(), "ResetNode ready (Ignition). model=%s world=%s bounds=[%.1f,%.1f]x[%.1f,%.1f]",
-                tb3_model_.c_str(), world_name_.c_str(), x_min_, x_max_, y_min_, y_max_);
+    RCLCPP_INFO(get_logger(),
+                "ResetNode ready. model=%s world=%s stage=%d "
+                "arena=%.1fx%.1f spawn=(%.2f,%.2f,%.2f) fixed=%d "
+                "inner_wall_rects=%zu",
+                tb3_model_.c_str(), world_name_.c_str(), stage_num_,
+                arena_length_, arena_width_,
+                spawn_x_, spawn_y_, spawn_theta_, fixed_spawn_ ? 1 : 0,
+                obstacle_rectangles_.size());
   }
 
 private:
   void handle_reset(ResetEpisode::Request::ConstSharedPtr req,
                     ResetEpisode::Response::SharedPtr     res)
   {
-    RCLCPP_INFO(get_logger(), "handle_reset called. n_obstacles=%d random_pose=%d",
-                n_obstacles_, req->random_pose);
+    RCLCPP_INFO(get_logger(), "handle_reset: spawn_only=%d random_pose=%d radius=%.2f",
+                req->spawn_only, req->random_pose, req->goal_radius);
+
+    // ── drlnav successive-goals path: spawn new goal only, don't teleport ──
+    if (req->spawn_only) {
+      // env_bridge now tracks robot in WORLD frame (via Ignition's pose feed),
+      // so we use the same /odom subscriber's most-recent reading as a proxy
+      // for robot world position. After full reset this is stable enough;
+      // future refactor could subscribe to Ignition pose here too.
+      float robot_wx, robot_wy;
+      {
+        std::lock_guard<std::mutex> lk(mtx_);
+        robot_wx = odom_x_;
+        robot_wy = odom_y_;
+      }
+      // Sample new goal in WORLD frame around robot's current world position.
+      float ngx, ngy;
+      sample_goal_near(robot_wx, robot_wy, req->goal_radius, ngx, ngy);
+
+      // Publish /goal_pose in WORLD frame (no transform needed — env_bridge
+      // now also tracks the robot in world frame).
+      publish_goal(ngx, ngy);
+      std::thread([this, ngx, ngy]() {
+        update_goal_marker(ngx, ngy);
+      }).detach();
+
+      res->success = true;
+      res->info    = "spawn_only_ok";
+      RCLCPP_INFO(get_logger(),
+                  "Spawn-only goal world=(%.2f,%.2f) r=%.2f robot_world=(%.2f,%.2f)",
+                  ngx, ngy, req->goal_radius, robot_wx, robot_wy);
+      return;
+    }
 
     float rx, ry, rtheta, gx, gy;
     std::vector<XY>    obs_pos;
@@ -174,42 +224,147 @@ private:
       post_odom_yaw = odom_yaw_;
     }
 
-    // Transform goal from world frame to odom frame, accounting for both the
-    // translational offset and the rotational offset between frames.
-    // The DiffDrive plugin does not reset its accumulated heading when set_pose
-    // is called, so the odom frame can be rotated by dtheta = post_odom_yaw - rtheta
-    // relative to the world frame. Ignoring this rotation causes goal_odom to point
-    // in the wrong direction, which is why the robot appears to "reach" the wrong spot.
-    float dtheta    = post_odom_yaw - rtheta;
-    float cos_d     = std::cos(dtheta);
-    float sin_d     = std::sin(dtheta);
-    float dgx       = gx - rx;
-    float dgy       = gy - ry;
-    float goal_odom_x = post_odom_x + cos_d * dgx - sin_d * dgy;
-    float goal_odom_y = post_odom_y + sin_d * dgx + cos_d * dgy;
-    publish_goal(goal_odom_x, goal_odom_y);
+    // env_bridge now tracks robot in WORLD frame via Ignition's pose feed,
+    // so /goal_pose is published in WORLD frame directly. No odom transform.
+    (void)post_odom_yaw;  // silence unused-var warning
+    publish_goal(gx, gy);
     std::thread([this, gx, gy]() { update_goal_marker(gx, gy); }).detach();
 
     res->success = ok;
     res->info    = ok ? "reset_ok" : "teleport_failed";
 
     RCLCPP_INFO(get_logger(),
-                "Reset: robot_world=(%.2f,%.2f,θ=%.2f) goal_world=(%.2f,%.2f) | "
-                "post_odom=(%.2f,%.2f,θ=%.2f) dtheta=%.2f goal_odom=(%.2f,%.2f)",
-                rx, ry, rtheta, gx, gy,
-                post_odom_x, post_odom_y, post_odom_yaw, dtheta,
-                goal_odom_x, goal_odom_y);
+                "Reset: robot_world=(%.2f,%.2f,θ=%.2f) goal_world=(%.2f,%.2f) "
+                "post_odom=(%.2f,%.2f)",
+                rx, ry, rtheta, gx, gy, post_odom_x, post_odom_y);
   }
 
   // ── pose sampling ──────────────────────────────────────────────────────────
   using XY = std::pair<float, float>;
   static std::string obs_name(int i) { return "dyn_obs_" + std::to_string(i); }
 
-  // Samples robot, goal, and (optionally) dynamic obstacle poses for one episode.
-  // 30% of episodes are "blocked": robot near arena center (inside obstacle ring),
-  // goal outside the ring, so the direct path is almost always obstructed.
-  // The remaining 70% use unconstrained random sampling for easy wins that keep
-  // the policy anchored on goal-seeking.
+  // drlnav generate_dynamic_goal_pose port — line-by-line match:
+  //   ring_position = random.uniform(0, 1)
+  //   origin = radius + numpy.random.normal(0, 0.1)
+  //   goal = robot + (cos(2*pi*ring_position), sin(2*pi*ring_position)) * origin
+  //   retry up to 100 times if not in arena bounds.
+  // Noise is RE-SAMPLED on every retry (drlnav does this — important so a
+  // bad radius noise doesn't lock out all 100 attempts).
+  void sample_goal_near(float rx, float ry, float radius,
+                        float & gx, float & gy)
+  {
+    std::uniform_real_distribution<float> dring(0.0f, 1.0f);
+    std::normal_distribution<float>       dnoise(0.0f, 0.1f);
+    for (int tries = 0; tries < 100; ++tries) {
+      float ring_position = dring(rng_);
+      float origin = std::max(radius + dnoise(rng_), 0.1f);
+      float th = 2.0f * static_cast<float>(M_PI) * ring_position;
+      gx = rx + origin * std::cos(th);
+      gy = ry + origin * std::sin(th);
+      if (goal_is_in_arena(gx, gy)) return;
+    }
+    // After 100 failures, clamp into bounds. drlnav does a full sim reset
+    // here, but we don't — that would discard the policy's mid-episode
+    // momentum, which is the whole point of successive goals.
+    gx = std::clamp(gx,
+                    static_cast<float>(x_min_) + 0.3f,
+                    static_cast<float>(x_max_) - 0.3f);
+    gy = std::clamp(gy,
+                    static_cast<float>(y_min_) + 0.3f,
+                    static_cast<float>(y_max_) - 0.3f);
+  }
+
+  // drlnav goal_is_valid port — checks arena bounds AND every inner-wall
+  // rectangle (inflated by NO_GOAL_SPAWN_MARGIN = 0.3).
+  bool goal_is_in_arena(float gx, float gy) const
+  {
+    // Arena bounds: drlnav's ARENA_LENGTH/2 = 2.1
+    const float half_x = static_cast<float>(arena_length_) / 2.0f;
+    const float half_y = static_cast<float>(arena_width_)  / 2.0f;
+    if (gx >  half_x || gx < -half_x) return false;
+    if (gy >  half_y || gy < -half_y) return false;
+    // Inner-wall rectangles (only populated for stages with inner_walls)
+    for (const auto & r : obstacle_rectangles_) {
+      if (gx >= r.x_min && gx <= r.x_max &&
+          gy >= r.y_min && gy <= r.y_max) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Build the obstacle rectangle list for goal_is_valid.
+  // Source: drlnav inner_walls/model.sdf — 7 walls, each 1 m × 0.15 m × 0.5 m
+  // box, inflated by NO_GOAL_SPAWN_MARGIN on every side. Stages 4, 5, 7-10
+  // include these inner walls; other stages get an empty list.
+  void build_obstacle_rectangles(int stage)
+  {
+    obstacle_rectangles_.clear();
+    const bool has_inner_walls = (stage == 4 || stage == 5 ||
+                                  (stage >= 7 && stage <= 10));
+    if (!has_inner_walls) return;
+
+    constexpr float MARGIN = 0.3f;          // drlnav NO_GOAL_SPAWN_MARGIN
+    constexpr float WALL_L = 1.0f;          // inner wall length
+    constexpr float WALL_W = 0.15f;         // inner wall thickness
+    struct WallSpec { float x, y, yaw; };
+    static const WallSpec walls[] = {
+      { -2.0f, -1.5f,    0.0f      },
+      { -0.5f, -2.0f,   -1.5708f   },
+      {  1.0f, -1.0f,    1.5708f   },
+      {  1.2f,  1.9f,   -1.5708f   },
+      {  1.9f,  0.4f,    0.0f      },
+      { -0.5f,  1.5f,    0.0f      },
+      { -1.2f,  0.092f, -1.5708f   },
+    };
+    for (const auto & w : walls) {
+      bool horizontal = std::abs(w.yaw) < 1e-3f;
+      float sx = horizontal ? (WALL_L + 2 * MARGIN) : (WALL_W + 2 * MARGIN);
+      float sy = horizontal ? (WALL_W + 2 * MARGIN) : (WALL_L + 2 * MARGIN);
+      Rect r;
+      r.x_min = w.x - sx * 0.5f;
+      r.x_max = w.x + sx * 0.5f;
+      r.y_min = w.y - sy * 0.5f;
+      r.y_max = w.y + sy * 0.5f;
+      obstacle_rectangles_.push_back(r);
+    }
+  }
+
+  // Transform a point (ox, oy) in odom frame to world frame, using the
+  // odom↔world relationship cached at the last full reset.
+  // Derivation: at teleport, robot was at world (rx, ry, rtheta) and at
+  // odom (post_odom_x, post_odom_y, post_odom_yaw). A vector that points
+  // some direction in odom frame points the same physical direction in
+  // world frame rotated by alpha = rtheta - post_odom_yaw.
+  void odom_to_world(float ox, float oy, float & wx, float & wy) const
+  {
+    float alpha = reset_robot_world_yaw_ - reset_post_odom_yaw_;
+    float ca = std::cos(alpha), sa = std::sin(alpha);
+    float dox = ox - reset_post_odom_x_;
+    float doy = oy - reset_post_odom_y_;
+    wx = reset_robot_world_x_ + ca * dox - sa * doy;
+    wy = reset_robot_world_y_ + sa * dox + ca * doy;
+  }
+
+  // Inverse of odom_to_world — used to convert a world-frame goal back to
+  // odom so the RL stack (which sees /goal_pose in odom frame) navigates
+  // toward the right physical location.
+  void world_to_odom(float wx, float wy, float & ox, float & oy) const
+  {
+    float alpha = reset_robot_world_yaw_ - reset_post_odom_yaw_;
+    float ca = std::cos(-alpha), sa = std::sin(-alpha);
+    float dwx = wx - reset_robot_world_x_;
+    float dwy = wy - reset_robot_world_y_;
+    ox = reset_post_odom_x_ + ca * dwx - sa * dwy;
+    oy = reset_post_odom_y_ + sa * dwx + ca * dwy;
+  }
+
+  // drlnav generate_goal_pose port — exact match for stages 1-12.
+  // - Stages 1, 2, 3, 6, 10: random in [-1.5, 1.5] at 0.1 granularity
+  // - Stages 4, 5, 7      : 15-position fixed goal list
+  // - Stages 8, 9, 12     : 17-position fixed goal list
+  // - Stage  11           : 6-position fixed goal list (large house)
+  // Loop until Manhattan distance from previous goal >= 2.0 (or 100 tries).
   void sample_all_poses(float & rx, float & ry, float & rtheta,
                         float & gx, float & gy,
                         std::vector<XY> & obs_pos, std::vector<float> & obs_yaw)
@@ -217,73 +372,67 @@ private:
     obs_pos.clear();
     obs_yaw.clear();
 
-    static const std::array<XY, 6> cylinders = {
-      XY{ 0.0f,  1.4f},
-      XY{ 1.2f,  0.7f},
-      XY{ 1.2f, -0.7f},
-      XY{ 0.0f, -1.4f},
-      XY{-1.2f, -0.7f},
-      XY{-1.2f,  0.7f},
-    };
-    const float clearance = 0.55f;
-
-    auto too_close = [&](float x, float y) {
-      for (auto & c : cylinders)
-        if (std::hypot(x - c.first, y - c.second) < clearance) return true;
-      return false;
-    };
-
-    std::uniform_real_distribution<float> dxy(
-      static_cast<float>(x_min_) + 0.2f,
-      static_cast<float>(x_max_) - 0.2f);
-    std::uniform_real_distribution<float> dtheta(-M_PI, M_PI);
-    std::uniform_real_distribution<float> dunif(0.0f, 1.0f);
-
-    rtheta = dtheta(rng_);
-
-    if (dunif(rng_) < static_cast<float>(p_blocked_)) {
-      // Guaranteed-blocked episode: pick one cylinder at random and place the
-      // goal just behind it. The goal angle is offset by ±5° from the cylinder's
-      // angle — small enough that the cylinder (angular shadow ±6.2° from center)
-      // still lies on the direct robot-to-goal line, so the robot cannot reach
-      // the goal without navigating around the obstacle.
-      std::uniform_int_distribution<int> cyl_dist(0, 5);
-      int ci = cyl_dist(rng_);
-      float cyl_angle = std::atan2(cylinders[ci].second, cylinders[ci].first);
-
-      // Robot near arena center (well inside the ring).
-      std::uniform_real_distribution<float> r_robot(0.0f, 0.40f);
-      float ar = dtheta(rng_);
-      rx = r_robot(rng_) * std::cos(ar);
-      ry = r_robot(rng_) * std::sin(ar);
-
-      // Goal behind the selected cylinder — reject if still too close to any obstacle.
-      std::uniform_real_distribution<float> r_goal(1.85f, 1.95f);
-      std::uniform_real_distribution<float> ang_noise(-0.087f, 0.087f); // ±5°
-      auto goal_too_close = [&](float x, float y) {
-        for (auto& c : cylinders)
-          if (std::hypot(x - c.first, y - c.second) < 0.55f) return true;
-        return false;
-      };
-      int goal_tries = 0;
-      do {
-        float ag = cyl_angle + ang_noise(rng_);
-        float rg = r_goal(rng_);
-        gx = rg * std::cos(ag);
-        gy = rg * std::sin(ag);
-      } while (++goal_tries < 100 && goal_too_close(gx, gy));
-      return;
+    // ── Robot pose ────────────────────────────────────────────────────────
+    if (fixed_spawn_) {
+      // drlnav-exact per-stage spawn:
+      //   Stages 1-3 → (0.0, 0.0, 0.0)   (arena center)
+      //   Stages 4-10 → (-0.7, 0.0, 0.0) (offset; matches drlnav stage SDFs)
+      if (stage_num_ >= 1 && stage_num_ <= 3) {
+        rx = 0.0f; ry = 0.0f; rtheta = 0.0f;
+      } else if (stage_num_ >= 4 && stage_num_ <= 10) {
+        rx = -0.7f; ry = 0.0f; rtheta = 0.0f;
+      } else {
+        rx     = static_cast<float>(spawn_x_);
+        ry     = static_cast<float>(spawn_y_);
+        rtheta = static_cast<float>(spawn_theta_);
+      }
+    } else {
+      std::uniform_real_distribution<float> dspawn(
+        static_cast<float>(x_min_) + 0.3f,
+        static_cast<float>(x_max_) - 0.3f);
+      std::uniform_real_distribution<float> dtheta(-M_PI, M_PI);
+      rx     = dspawn(rng_);
+      ry     = dspawn(rng_);
+      rtheta = dtheta(rng_);
     }
 
-    // Random placement with clearance from static obstacles and minimum
-    // robot-to-goal distance to ensure non-trivial episodes.
-    int tries = 0;
-    do {
-      rx = dxy(rng_); ry = dxy(rng_);
-      gx = dxy(rng_); gy = dxy(rng_);
-    } while (++tries < 300 &&
-             (too_close(rx, ry) || too_close(gx, gy) ||
-              std::hypot(rx - gx, ry - gy) < static_cast<float>(min_dist_)));
+    // ── Goal pose (drlnav generate_goal_pose, exact) ──────────────────────
+    // Stage-specific fixed lists from drl_gazebo.py:
+    static const std::vector<XY> STAGE_4_5_7_GOALS = {
+      { 1.0f,  0.0f}, { 2.0f, -1.5f}, { 0.0f, -2.0f}, { 2.0f,  2.0f}, { 0.8f,  2.0f},
+      {-1.9f,  1.9f}, {-1.9f,  0.2f}, {-1.9f, -0.5f}, {-2.0f, -2.0f}, {-0.5f, -1.0f},
+      { 1.5f, -1.0f}, {-0.5f,  1.0f}, {-1.0f, -2.0f}, { 1.8f, -0.2f}, { 1.0f, -1.9f},
+    };
+    static const std::vector<XY> STAGE_8_9_12_GOALS = {
+      { 2.0f,  2.0f}, { 2.0f,  1.5f}, { 2.0f, -0.5f}, { 2.0f, -1.0f}, { 2.0f, -2.0f},
+      { 1.3f,  1.0f}, { 1.0f,  0.3f}, { 1.0f, -2.0f}, { 0.3f, -1.0f}, { 0.0f,  2.0f},
+      { 0.0f, -1.0f}, {-1.0f,  1.0f}, {-1.0f, -1.2f}, {-2.0f,  1.0f}, {-2.2f,  0.0f},
+      {-2.0f, -2.2f}, {-2.4f,  2.4f},
+    };
+
+    std::uniform_int_distribution<int> dgrid(-15, 15);   // 0.1m granularity
+    auto sample_from_list = [this](const std::vector<XY> & lst) {
+      std::uniform_int_distribution<int> didx(0, lst.size() - 1);
+      return lst[didx(rng_)];
+    };
+
+    for (int tries = 0; tries < 100; ++tries) {
+      if (stage_num_ == 8 || stage_num_ == 9) {
+        auto p = sample_from_list(STAGE_8_9_12_GOALS); gx = p.first; gy = p.second;
+      } else if (stage_num_ == 4 || stage_num_ == 5 || stage_num_ == 7) {
+        auto p = sample_from_list(STAGE_4_5_7_GOALS);  gx = p.first; gy = p.second;
+      } else {
+        // Stages 1, 2, 3, 6, 10 → uniform random in [-1.5, 1.5] at 0.1 step
+        gx = dgrid(rng_) / 10.0f;
+        gy = dgrid(rng_) / 10.0f;
+      }
+      // drlnav Manhattan distance >= 2.0 from PREVIOUS goal
+      if (std::abs(prev_goal_x_ - gx) + std::abs(prev_goal_y_ - gy) >= 2.0f) {
+        break;
+      }
+    }
+    prev_goal_x_ = gx;
+    prev_goal_y_ = gy;
   }
 
   void spawn_all_obstacles(const std::vector<XY> & poses,
@@ -395,18 +544,19 @@ private:
   // ── goal marker management ─────────────────────────────────────────────────
   void update_goal_marker(float gx, float gy)
   {
+    // If the marker already exists, just teleport it to the new position
+    // (avoids "Visual: [goal_marker] already exists" GUI errors from
+    // delete-then-respawn race with fast successive goal events).
     if (goal_spawned_) {
-      delete_entity("goal_marker");
-      std::this_thread::sleep_for(200ms);
+      teleport_entity("goal_marker", gx, gy, 0.0f, static_cast<float>(sphere_radius_));
+    } else {
+      std::string sdf(GOAL_SPHERE_SDF);
+      auto pos = sdf.find("%RADIUS%");
+      if (pos != std::string::npos)
+        sdf.replace(pos, 8, std::to_string(sphere_radius_));
+      if (spawn_entity(sdf, gx, gy, static_cast<float>(sphere_radius_)))
+        goal_spawned_ = true;
     }
-
-    std::string sdf(GOAL_SPHERE_SDF);
-    auto pos = sdf.find("%RADIUS%");
-    if (pos != std::string::npos)
-      sdf.replace(pos, 8, std::to_string(sphere_radius_));
-
-    if (spawn_entity(sdf, gx, gy, static_cast<float>(sphere_radius_)))
-      goal_spawned_ = true;
 
     // RViz marker
     visualization_msgs::msg::Marker m;
@@ -436,14 +586,36 @@ private:
   }
 
   // ── members ────────────────────────────────────────────────────────────────
+  struct Rect { float x_min, x_max, y_min, y_max; };
+
   std::mutex mtx_;
   std::string tb3_model_, world_name_;
   double x_min_, x_max_, y_min_, y_max_;
   double min_dist_, sphere_radius_;
+  bool   fixed_spawn_;
+  double spawn_x_, spawn_y_, spawn_theta_;
+  // drlnav goal validity parameters
+  double arena_length_, arena_width_;
+  int    stage_num_;
+  std::vector<Rect> obstacle_rectangles_;
+
+  // drlnav: last goal published this episode — used for Manhattan-distance
+  // constraint on the NEXT goal (ensures consecutive goals are diverse).
+  float prev_goal_x_ = 0.0f;
+  float prev_goal_y_ = 0.0f;
   float odom_x_ = 0.0f, odom_y_ = 0.0f, odom_yaw_ = 0.0f;
 
+  // Full odom↔world transform captured at the start of each episode (full reset).
+  // Without this, goals sampled in odom frame can fall outside the world arena
+  // when DiffDrive's odom origin or heading drifts from world.
+  float reset_robot_world_x_  = 0.0f;
+  float reset_robot_world_y_  = 0.0f;
+  float reset_robot_world_yaw_= 0.0f;
+  float reset_post_odom_x_    = 0.0f;
+  float reset_post_odom_y_    = 0.0f;
+  float reset_post_odom_yaw_  = 0.0f;
+
   int    n_obstacles_;
-  double p_blocked_;
   std::mt19937 rng_;
   bool goal_spawned_;
   bool obs_spawned_;

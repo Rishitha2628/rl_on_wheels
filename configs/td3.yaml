@@ -1,0 +1,98 @@
+# Hyperparameters synced to drlnav common/settings.py defaults.
+# Lines marked  ← drlnav  match drlnav's value exactly; the few that don't
+# are flagged with the SB3-framework reason next to them.
+
+td3:
+  # drlnav uses 3e-3 with their custom PyTorch impl; SB3's TD3 diverges at
+  # that rate (actor saturates → physics jumping). 3e-4 is SB3's tested default.
+  learning_rate: 3.0e-4
+  buffer_size: 1_000_000     # ← drlnav BUFFER_SIZE
+  batch_size: 128            # ← drlnav BATCH_SIZE
+  tau: 0.003                 # ← drlnav TAU
+  gamma: 0.99                # ← drlnav DISCOUNT_FACTOR
+  train_freq: 1              # one grad step per env step
+  gradient_steps: 1          # ← drlnav implicit
+  # drlnav uses OBSERVE_STEPS=25000 with their own PyTorch impl. SB3's TD3
+  # at LR=3e-4 doesn't need that long a warmup; 10000 is a balanced middle.
+  learning_starts: 10000
+  total_timesteps: 1_000_000
+
+  # TD3-specific
+  policy_delay: 2            # ← drlnav POLICY_UPDATE_FREQUENCY
+  target_policy_noise: 0.2   # ← drlnav POLICY_NOISE
+  target_noise_clip: 0.5     # ← drlnav POLICY_NOISE_CLIP
+  net_arch: [512, 512]       # ← drlnav HIDDEN_SIZE=512 (two layers)
+
+  # Exploration noise — drlnav uses OU during training
+  action_noise:
+    type: "ou"
+    sigma: 0.1
+    theta: 0.15
+
+  # drlnav defaults: ENABLE_STACKING=False → no frame stack.
+  # action_repeat=4 brought back for smoother motion (less physics stress at
+  # max angular velocity); drlnav has FRAME_SKIP=4 as their paired constant.
+  frame_stack: 1
+  action_repeat: 4
+
+env:
+  lidar_bins: 36
+  max_lidar_range: 3.5         # ← drlnav LIDAR_DISTANCE_CAP
+  collision_threshold: 0.13    # ← drlnav THRESHOLD_COLLISION
+  tb3_model: "waffle_pi"
+  goal_tolerance: 0.20         # ← drlnav THREHSOLD_GOAL
+  # drlnav EPISODE_TIMEOUT_SECONDS = 50 (scaled with difficulty). At our
+  # 0.4 s/agent-step (action_repeat=4 × step_duration=0.1), 125 ticks ≈ 50 s.
+  # 150 gives a small buffer for hard goals at high difficulty_radius.
+  max_episode_steps: 450
+  clearance_threshold: 0.8
+
+  # Reward weights — unused now (reward is hardcoded drlnav get_reward_A in env_bridge_node)
+  goal_reward: 1.0
+  collision_penalty: -1.0
+  time_penalty: -0.005
+  distance_reward_scale: 1.0
+
+  min_linear_vel:   0.0        # ← drlnav ENABLE_BACKWARD=False
+  max_linear_vel:   0.22       # ← drlnav SPEED_LINEAR_MAX
+  max_angular_vel:  2.0        # ← drlnav SPEED_ANGULAR_MAX
+
+  world_bounds: [-2.0, 2.0, -2.0, 2.0]
+  robot_min_goal_dist: 0.5
+
+  # SIMPLE MODE — one goal per episode, no successive chaining.
+  # Each episode: robot teleports to fixed spawn (-0.7, 0), random goal
+  # spawns somewhere in the arena. Episode ends on goal-reach, collision,
+  # or timeout. Same architecture as the original SAC training — easier
+  # to debug, success_rate is the clean per-episode metric.
+  successive_goals: false
+  # Unused when successive_goals=false; kept for future flip.
+  difficulty_radius_init: 1.0
+  difficulty_radius_min:  0.5
+  difficulty_radius_max:  4.0
+  difficulty_grow:        1.01
+  difficulty_shrink:      0.99
+
+ros2:
+  observation_service: "/get_observation"
+  step_service: "/step"
+  reset_service: "/reset_episode"
+  cmd_vel_topic: "/cmd_vel"
+  scan_topic: "/scan"
+  odom_topic: "/odom"
+  goal_pose_topic: "/goal_pose"
+  reward_topic: "/reward"
+  episode_done_topic: "/episode_done"
+  service_timeout_sec: 10.0
+  step_duration_sec: 0.1
+
+training:
+  checkpoint_dir: "/checkpoints"
+  checkpoint_freq: 2_000
+  tensorboard_log: "/logs/tensorboard"
+  log_interval: 10
+
+eval:
+  n_eval_episodes: 10
+  deterministic: true
+ 

@@ -65,7 +65,7 @@ def main() -> None:
             done     = terminated or truncated
             ep_rew  += reward
             ep_len  += 1
-            if info.get("success"):
+            if info.get("is_success"):
                 success = True
 
         ep_rewards.append(ep_rew)
