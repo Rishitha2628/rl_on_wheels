@@ -1,21 +1,30 @@
 # rl_on_wheels
 
-Reinforcement learning for mobile robot navigation using ROS2 Humble + Ignition Fortress (Gazebo).
+Reinforcement learning for mobile robot navigation on TurtleBot3 Waffle Pi
+in ROS2 Humble + Ignition Fortress (Gazebo Sim).
 
-**Phase 1 — SAC** — obstacle avoidance + goal-reaching on TurtleBot3 Waffle Pi in a 6×6 m training room with 5 dynamic obstacles.  
-Sensor input: 2D LiDAR (`/scan`, 360 rays → 36 normalised bins). No cameras.
+Three agents are wired up — SAC (legacy), **TD3** (current focus), and PPO —
+plus a 10-stage progressive curriculum from an empty arena up through inner
+walls and moving obstacles. Sensor input is 2D LiDAR only (360 rays → 36
+normalised bins). No cameras.
 
 ---
 
-## Roadmap
+## Stage curriculum
 
-| Phase | Method | Status |
-|-------|--------|--------|
-| 1 | SAC (goal reaching, obstacle avoidance) | **current** |
-| 2 | Domain Randomisation (sensor noise, friction, mass) | planned |
-| 3 | Model-Based RL (world model + Dyna-style planning) | planned |
-| 4 | Imitation Learning warm-start (behaviour cloning) | planned |
-| 5 | ONNX export + real-robot deployment | planned |
+| Stage | World layout |
+|-------|--------------|
+| 1 | empty 5×5 m arena |
+| 2 | 4 static cylinders at (±1, ±1) |
+| 3 | 4 cylinders doing small-amplitude oscillations |
+| 4 | inner walls + 2 moving cylinders *(canonical training stage)* |
+| 5 | inner walls + 6 moving cylinders |
+| 6 | 6 moving cylinders, no inner walls |
+| 7–10 | inner walls + 2 moving cylinders (eval variants, different goal sets) |
+
+Robot spawns at `(0, 0)` for stages 1–3 and `(-0.7, 0)` for stages 4–10.
+Goal positions are stage-dependent — random sampling on the easier stages,
+fixed goal lists on stages 4, 5, 7, 8, 9.
 
 ---
 
@@ -23,36 +32,36 @@ Sensor input: 2D LiDAR (`/scan`, 360 rays → 36 normalised bins). No cameras.
 
 ```
 rl_on_wheels/
-├── docker/
-│   ├── Dockerfile               ROS2 Humble + Ignition Fortress + PyTorch
-│   ├── docker-compose.yml       sim / train / eval services
-│   ├── entrypoint.sh
-│   └── requirements.txt
-├── ros2_ws/src/tb3_rl_bridge/   C++ ROS2 package
-│   ├── srv/                     GetObservation, Step, ResetEpisode services
+├── docker/                          ROS2 Humble + Ignition Fortress image
+├── ros2_ws/src/tb3_rl_bridge/       C++ ROS2 package
+│   ├── srv/                         GetObservation, Step, ResetEpisode
 │   ├── src/
-│   │   ├── env_bridge_node.cpp  LiDAR + odom → obs, reward, done detection
-│   │   └── reset_node.cpp       episode resets via gz-transport, goal marker
-│   ├── worlds/tb3_training_room.sdf  Ignition world — 6×6 m room with waffle_pi
-│   └── launch/bridge.launch.py  launches sim + bridge nodes
+│   │   ├── env_bridge_node.cpp      obs assembly, reward, done detection
+│   │   ├── reset_node.cpp           teleport + goal sampling per stage
+│   │   └── dynamic_obstacle_node.cpp keyframe-driven moving cylinders
+│   ├── worlds/tb3_stage{1..10}.sdf  per-stage Ignition world files
+│   ├── tools/gen_stages.py          regenerates stage SDFs from template
+│   └── launch/bridge.launch.py      starts sim + bridge nodes
 ├── rl/
-│   ├── envs/ros2_gym_env.py     gymnasium Env wrapper
-│   ├── agents/sac_her.py        SAC build/load helpers
-│   ├── train.py                 training entrypoint
-│   └── eval.py                  evaluation / rollout
-├── configs/sac_her.yaml         all hyperparameters + env settings
-└── scripts/                     helper shell scripts
+│   ├── envs/ros2_gym_env.py         gymnasium Env wrapper
+│   ├── agents/{sac_her,td3,ppo}_agent.py  per-method build/load helpers
+│   ├── train.py / train_td3.py / train_ppo.py
+│   └── eval.py
+├── configs/{sac_her,td3,ppo}.yaml   hyperparameters + env settings
+└── scripts/
+    ├── launch_sim.sh                in-container sim launcher
+    └── run_stage.sh                 host-side helper: `./run_stage.sh <N>`
 ```
 
 ---
 
 ## Prerequisites
 
-- **Docker >= 24** and **Docker Compose v2**
+- **Docker ≥ 24** and **Docker Compose v2**
 - **NVIDIA GPU** + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
-- **X11 display** for Gazebo GUI (native Linux desktop)
+- **X11 display** for Ignition GUI (native Linux desktop)
 
-Verify GPU passthrough works:
+Verify GPU passthrough:
 ```bash
 docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
 ```
@@ -61,186 +70,150 @@ docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
 
 ## Quickstart
 
-### 1. Clone
-
-```bash
-git clone <repo-url> rl_on_wheels
-cd rl_on_wheels
-```
-
-### 2. Build the Docker image
-
+### 1. Build the image
 ```bash
 docker compose -f docker/docker-compose.yml build
 ```
 
-This bakes in ROS2 Humble, Ignition Fortress, TurtleBot3 packages, PyTorch, and stable-baselines3.
-
-### 3. Allow X11 access (for Gazebo GUI)
-
-Run this on the **host** before starting the container:
+### 2. Allow X11 (host side)
 ```bash
 xhost +local:root
 ```
 
-### 4. Start the simulation container
+### 3. Train TD3 on a chosen stage
+
+The simplest path uses `scripts/run_stage.sh`, which brings up the sim and
+the trainer together:
 
 ```bash
-docker run -it --rm \
-  --gpus all \
-  --privileged \
-  --network host \
-  --ipc host \
-  -e DISPLAY=$DISPLAY \
-  -e NVIDIA_VISIBLE_DEVICES=all \
-  -e NVIDIA_DRIVER_CAPABILITIES=all \
-  -e __GLX_VENDOR_LIBRARY_NAME=nvidia \
-  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-  -v $(pwd)/ros2_ws/src:/ros2_ws/src \
-  -v $(pwd)/configs:/configs:ro \
-  rl_on_wheels-sim bash
+./scripts/run_stage.sh 4                                # fresh
+./scripts/run_stage.sh 4 /checkpoints/td3_tb3_100000_steps  # resume
 ```
 
-Inside the container, source and launch:
+To run sim and training in separate terminals (useful for debugging):
+
 ```bash
-source /opt/ros/humble/setup.bash
-source /ros2_ws/install/setup.bash
-ros2 launch tb3_rl_bridge bridge.launch.py
+# terminal 1: sim
+STAGE=4 docker compose -f docker/docker-compose.yml up sim
+
+# terminal 2: training
+docker compose -f docker/docker-compose.yml run --rm train_td3
 ```
 
-This starts:
-- Ignition Fortress server (physics + sensors)
-- Ignition GUI (3D viewer, headless-safe — GUI crash won't kill the sim)
-- `ros_gz_bridge` — ROS2 ↔ Ignition topic bridge
-- `env_bridge_node` — obs assembly, action execution, reward + done computation
-- `reset_node` — random episode resets, obstacle management, goal sphere
-
-To run headless (no GUI):
+Headless sim (no Ignition GUI):
 ```bash
-ros2 launch tb3_rl_bridge bridge.launch.py headless:=true
+HEADLESS=1 STAGE=4 docker compose -f docker/docker-compose.yml up sim
 ```
 
-### 5. Rebuild after source changes
-
-If you edit any C++ node:
+### 4. TensorBoard
 ```bash
-cd /ros2_ws
-colcon build --packages-select tb3_rl_bridge
+# inside the train_td3 container, port 6007 is mapped (6006 is SAC's)
+open http://localhost:6007
+```
+
+### 5. Rebuild after C++ changes
+If you edit any `.cpp` under `tb3_rl_bridge/src/`, rebuild inside the sim
+container:
+```bash
+docker exec -it <sim_container> bash
+cd /ros2_ws && colcon build --packages-select tb3_rl_bridge
 source install/setup.bash
+# then relaunch
 ```
 
-### 6. Run training (in a second terminal / second container)
-
+### 6. Evaluate a checkpoint
 ```bash
-docker run -it --rm \
-  --network host \
-  --ipc host \
-  -v $(pwd)/rl:/rl:ro \
-  -v $(pwd)/configs:/configs:ro \
-  -v $(pwd)/checkpoints:/checkpoints \
-  -v $(pwd)/logs:/logs \
-  rl_on_wheels-sim \
-  python3 /rl/train.py --config /configs/sac_her.yaml
-```
-
-Resume from a checkpoint:
-```bash
-CHECKPOINT=checkpoints/sac_her_tb3_100000_steps \
-  docker run ... python3 /rl/train.py --config /configs/sac_her.yaml \
-    --checkpoint $CHECKPOINT
-```
-
-### 7. TensorBoard
-
-```bash
-tensorboard --logdir logs/tensorboard --host 0.0.0.0
-# open http://localhost:6006
-```
-
-### 8. Evaluate a trained model
-
-```bash
-docker run -it --rm \
-  --network host \
-  -v $(pwd)/rl:/rl:ro \
-  -v $(pwd)/configs:/configs:ro \
-  -v $(pwd)/checkpoints:/checkpoints:ro \
-  rl_on_wheels-sim \
-  python3 /rl/eval.py --config /configs/sac_her.yaml \
-    --checkpoint checkpoints/final_model
+CHECKPOINT=checkpoints/td3_tb3_214000_steps \
+  docker compose -f docker/docker-compose.yml run --rm eval
 ```
 
 ---
 
-## Configuration
+## Switching methods
 
-All hyperparameters live in [`configs/sac_her.yaml`](configs/sac_her.yaml).
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `sac.total_timesteps` | 1 000 000 | training budget |
-| `sac.learning_rate` | 1e-4 | Adam LR |
-| `sac.gamma` | 0.99 | discount factor |
-| `sac.ent_coef` | 0.1 | fixed entropy coefficient (prevents collapse) |
-| `sac.learning_starts` | 3000 | random steps before first gradient update |
-| `sac.gradient_steps` | 2 | gradient updates per env step |
-| `env.lidar_bins` | 36 | downsampled LiDAR rays |
-| `env.max_lidar_range` | 3.5 m | LiDAR clip range |
-| `env.goal_tolerance` | 0.3 m | success radius |
-| `env.collision_threshold` | 0.2 m | LiDAR min-range collision trigger |
-| `env.max_episode_steps` | 600 | steps before truncation |
-| `training.checkpoint_freq` | 10 000 | save every N steps |
+| Method | Config | Train script | TensorBoard port |
+|--------|--------|--------------|-------|
+| SAC (legacy) | `configs/sac_her.yaml` | `rl/train.py` | 6006 |
+| TD3 | `configs/td3.yaml` | `rl/train_td3.py` | 6007 |
+| PPO | `configs/ppo.yaml` | `rl/train_ppo.py` | — |
 
 ---
 
 ## Architecture
 
 ```
-Python (train.py)
+Python (train_td3.py)
     │  gym.step(action)
     ▼
-TurtleBot3Env  ──── ROS2 DDS ────►  EnvBridgeNode (C++)
-                                         │  /cmd_vel ──► Ignition
-                                         │  /scan, /odom ◄── Ignition
-                                         │  /goal_pose ◄── ResetNode
-                                         │       └── gz-transport → set_pose, spawn/move obstacles
-SAC.learn()
+TurtleBot3Env  ──── ROS2 services ────►  env_bridge_node (C++)
+                                              │  /cmd_vel ──► Ignition
+                                              │  /scan, /odom ◄── Ignition
+                                              │  /goal_pose  ◄── reset_node
+                                              │  /obstacle_poses ◄── dynamic_obstacle_node
+                                              └── world-frame robot pose
+                                                  ◄── Ignition /dynamic_pose/info
 ```
 
 ### ROS2 services
 
 | Service | Direction | Description |
 |---------|-----------|-------------|
-| `/step` | Python → C++ | apply action, sleep step_duration, return (obs, reward, done) |
-| `/get_observation` | Python → C++ | read current sensor state without acting |
-| `/reset_episode` | Python → C++ | teleport robot + spawn new goal + reposition obstacles |
+| `/step` | Python → C++ | apply action, wait `step_duration`, return (obs, reward, done) |
+| `/get_observation` | Python → C++ | read current sensor state |
+| `/reset_episode` | Python → C++ | teleport robot + spawn new goal |
 
-### Observation vector (41-dim)
-
-```
-[lidar_0 … lidar_35]   36 × normalised min-range ∈ [0, 1]   (robot frame)
-[dist_norm]             distance to goal / max_lidar_range ∈ [0, 1]
-[cos_goal]              cosine of goal heading in robot frame ∈ [−1, 1]
-[sin_goal]              sine   of goal heading in robot frame ∈ [−1, 1]
-[prev_lin_vel]          previous linear  velocity ∈ [0,    0.26] m/s
-[prev_ang_vel]          previous angular velocity ∈ [−1.82, 1.82] rad/s
-```
-
-### Reward function
-
-Paper §3.3 hybrid piecewise reward (Luo et al., Remote Sensing 16(12):2072):
+### Observation vector (40-dim)
 
 ```
-r_cont = w_d × (d_prev − d_t) + w_θ × (θ_prev − θ_t)   (progress shaping)
-
-r = +r_success  (10.0)   if dist < 0.3 m AND heading_error < 0.5 rad
-r = −r_collision (10.0)  if min_lidar < 0.2 m
-r = r_partial   (2.0, once per episode) + r_cont − r_step   if dist < 0.3 m (position only)
-r = r_cont − r_step (0.005)                                  otherwise
+[lidar_0 … lidar_35]    36 × normalised LiDAR ∈ [0, 1]    (robot frame)
+[dist_norm]              distance to goal / max_lidar_range
+[cos_goal_body]          cosine of goal heading in robot frame
+[sin_goal_body]          sine   of goal heading in robot frame
+[prev_lin_vel]           previous linear  velocity
 ```
 
-Where `d_t` = distance to goal, `θ_t` = |heading error| (robot yaw vs goal direction),
-`w_d = 1.0`, `w_θ = 0.5`. All constants are ROS2 parameters on `env_bridge_node`.
+### Reward (current TD3 setup)
+
+Per-step shaping plus large terminal bonuses:
+
+```
+reward = r_yaw + r_vangular + r_vlinear + r_distance + r_obstacle − 1
+
+terminal: +2500 on goal reached, −2000 on collision
+```
+
+| Term | Range | Purpose |
+|------|-------|---------|
+| `r_yaw = -|goal_angle|` | [−π, 0] | face the goal |
+| `r_vangular = -ω²` | [−4, 0] | discourage spinning |
+| `r_vlinear = -((v_max − v) × 10)²` | [−~5, 0] | encourage forward motion |
+| `r_distance = 2·d₀/(d₀ + d) − 1` | [−1, 1] | shape progress toward goal |
+| `r_obstacle = -20 if min_obs_dist < 0.22m else 0` | {0, −20} | avoid moving cylinders |
+
+Wall proximity is handled via the collision termination (`-2000`),
+not via `r_obstacle` — only moving cylinders trigger that penalty.
+
+---
+
+## Configuration highlights (TD3)
+
+All hyperparameters live in [`configs/td3.yaml`](configs/td3.yaml).
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `td3.learning_rate` | 1e-4 | Adam LR (3e-4 default; lower for fine-tune) |
+| `td3.buffer_size` | 1 000 000 | replay buffer capacity |
+| `td3.batch_size` | 128 | minibatch size |
+| `td3.tau` | 0.003 | target network soft-update rate |
+| `td3.policy_delay` | 2 | actor update every N critic updates |
+| `td3.action_noise.sigma` | 0.05 | OU exploration noise σ |
+| `td3.net_arch` | [512, 512] | hidden layers |
+| `td3.frame_stack` | 1 | number of stacked observation frames |
+| `td3.action_repeat` | 4 | hold each action for N sim steps |
+| `env.max_episode_steps` | 450 | timeout |
+| `env.collision_threshold` | 0.13 m | LiDAR min-range collision trigger |
+| `env.goal_tolerance` | 0.20 m | success radius |
+| `training.checkpoint_freq` | 2 000 | save every N steps |
 
 ---
 
