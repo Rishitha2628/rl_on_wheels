@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Generate drlnav-style stage SDF worlds for Ignition Fortress.
+"""Generate stage SDF worlds for Ignition Fortress.
 
 Reads the canonical scene/robot blocks from tb3_empty.sdf and emits
 tb3_stage{1..10}.sdf next to it, each containing the same physics +
-robot but a stage-specific obstacle layout matching:
+robot but a stage-specific obstacle layout.
 
-    https://github.com/tomasvr/turtlebot3_drlnav
-
-Geometry numbers come directly from drlnav's model.sdf files:
-  - outer arena: 5x5 m, walls at x/y = ±2.425  (was ±2.2 in tb3_empty)
+Geometry:
+  - outer arena: 5x5 m, walls at x/y = ±2.425
   - inner_walls: 7 segments of 1 m × 0.15 m × 0.5 m
   - static obstacles: 4 cylinders r=0.15, h=0.5 at (±1, ±1)
   - moving obstacles: cylinders r=0.16, h=0.5 — driven kinematically
@@ -24,9 +22,9 @@ from pathlib import Path
 WORLDS_DIR = Path(__file__).resolve().parent.parent / "worlds"
 TEMPLATE   = WORLDS_DIR / "tb3_empty.sdf"
 
-# ── drlnav stage configuration ────────────────────────────────────────────────
+# ── stage configuration ───────────────────────────────────────────────────────
 # (inner_walls, static_obstacles, list_of_moving_obstacle_base_xy)
-# drlnav-exact robot spawn pose per stage (from each stage's waffle.model).
+# Robot spawn pose per stage.
 # Stages 1-3: arena center (0, 0). Stages 4-10: offset (-0.7, 0).
 STAGE_SPAWN = {
     1: (0.0, 0.0, 0.0),
@@ -44,10 +42,8 @@ STAGE_SPAWN = {
 STAGES = {
     1:  (False, False, []),
     2:  (False, True,  []),
-    # Stage 3 (drlnav-faithful): same 4 cylinders as stage 2 but MOVING.
-    # In drlnav this is the libobstacles.so plugin animating all cylinders.
-    # Our dynamic_obstacle_node + motion_mode="stage3" gives equivalent
-    # small-amplitude oscillations.
+    # Stage 3: same 4 cylinders as stage 2 but MOVING with small-amplitude
+    # oscillations (dynamic_obstacle_node + motion_mode="stage3").
     3:  (False, False, [(1, -1.0, -1.0), (2, -1.0, 1.0),
                         (3,  1.0, -1.0), (4,  1.0, 1.0)]),
     4:  (True,  False, [(1, 2.0, 2.0), (2, -2.0, -2.0)]),
@@ -61,9 +57,9 @@ STAGES = {
     10: (True,  False, [(1, 2, 2), (2, -2, -2)]),
 }
 
-# ── outer walls (5x5 arena, drlnav exact geometry) ────────────────────────────
+# ── outer walls (5x5 arena) ───────────────────────────────────────────────────
 OUTER_WALLS = """\
-    <!-- ── drlnav outer walls (5x5 arena, walls at ±2.425) ── -->
+    <!-- ── outer walls (5x5 arena, walls at ±2.425) ── -->
     <model name="outer_wall_1">
       <static>true</static>
       <pose>-2.425 0 0 0 0 1.5708</pose>
@@ -114,7 +110,7 @@ OUTER_WALLS = """\
     </model>
 """
 
-# ── inner walls (7 segments, drlnav exact geometry) ───────────────────────────
+# ── inner walls (7 segments) ──────────────────────────────────────────────────
 INNER_WALL_POSES = [
     (-2.0, -1.5, 0.0),
     (-0.5, -2.0, -1.5708),
@@ -126,7 +122,7 @@ INNER_WALL_POSES = [
 ]
 
 def inner_walls_block() -> str:
-    out = ["    <!-- ── drlnav inner walls (7 segments, 1m × 0.15m × 0.5m) ── -->"]
+    out = ["    <!-- ── inner walls (7 segments, 1m × 0.15m × 0.5m) ── -->"]
     for i, (x, y, yaw) in enumerate(INNER_WALL_POSES, 1):
         out.append(f"""\
     <model name="inner_wall_{i}">
@@ -143,11 +139,11 @@ def inner_walls_block() -> str:
     </model>""")
     return "\n".join(out) + "\n"
 
-# ── static obstacles (drlnav `obstacles` model: 4 cylinders at ±1,±1) ─────────
+# ── static obstacles (4 cylinders at ±1, ±1) ──────────────────────────────────
 STATIC_OBSTACLE_POSES = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
 
 def static_obstacles_block() -> str:
-    out = ["    <!-- ── drlnav static obstacles (4 cylinders) ── -->"]
+    out = ["    <!-- ── static obstacles (4 cylinders) ── -->"]
     for i, (x, y) in enumerate(STATIC_OBSTACLE_POSES, 1):
         out.append(f"""\
     <model name="static_obs_{i}">
@@ -168,7 +164,7 @@ def static_obstacles_block() -> str:
 def moving_obstacles_block(specs: list[tuple[int, float, float]]) -> str:
     if not specs:
         return ""
-    out = ["    <!-- ── drlnav moving obstacles (animated by dynamic_obstacle_node) ── -->"]
+    out = ["    <!-- ── moving obstacles (animated by dynamic_obstacle_node) ── -->"]
     for (idx, x, y) in specs:
         out.append(f"""\
     <model name="moving_obs_{idx}">
@@ -195,8 +191,8 @@ def build_stage(stage_num: int, has_inner: bool, has_static: bool,
     if has_static:
         parts.append(static_obstacles_block())
     parts.append(moving_obstacles_block(moving))
-    # drlnav-exact: override the template's robot <pose> with the stage's
-    # canonical spawn pose. Find the first <pose>...</pose> after the
+    # Override the template's robot <pose> with the stage's canonical
+    # spawn pose. Find the first <pose>...</pose> after the
     # `<model name="waffle_pi">` tag and rewrite it.
     spawn_x, spawn_y, spawn_theta = STAGE_SPAWN[stage_num]
     new_pose = f"      <pose>{spawn_x} {spawn_y} 0 0 0 {spawn_theta}</pose>"
@@ -224,7 +220,7 @@ def main() -> None:
     header = src[:end_of_header]
     header = header.replace(
         "Ignition Fortress world — empty environment with TurtleBot3 Waffle Pi.",
-        "Ignition Fortress world — drlnav-style stage (auto-generated).",
+        "Ignition Fortress world — stage (auto-generated).",
     )
 
     # Robot: from "<!-- ── TurtleBot3 Waffle Pi ──" through its closing tag.

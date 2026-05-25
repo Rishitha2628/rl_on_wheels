@@ -71,12 +71,40 @@ def load(checkpoint_path: str, env: TurtleBot3Env, config: dict,
     """
     if not os.path.exists(checkpoint_path) and not os.path.exists(checkpoint_path + ".zip"):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    td3 = config["td3"]
+    # custom_objects forces SB3 to override the checkpoint's saved values
+    # at load time — including the learning_rate Schedule (SB3 stores it
+    # as a constant_fn(lr) object, so we pass a fresh one).
+    new_lr = float(td3["learning_rate"])
+
+    def _const_lr(_progress_remaining: float, lr=new_lr) -> float:
+        return lr
+
     model = TD3.load(
         checkpoint_path,
         env=env,
-        custom_objects={"tensorboard_log": config["training"]["tensorboard_log"]},
+        custom_objects={
+            "tensorboard_log": config["training"]["tensorboard_log"],
+            "learning_rate":   new_lr,
+            "lr_schedule":     _const_lr,
+        },
     )
-    model.gradient_steps = int(config["td3"]["gradient_steps"])
+    # Belt-and-suspenders: also set the attribute directly so anything
+    # introspecting model.learning_rate sees the new value.
+    model.learning_rate = new_lr
+
+    # Rebuild action_noise from the (possibly updated) config so changes
+    # to sigma/theta take effect on resume.
+    action_dim = env.action_space.shape[0]
+    model.action_noise = _make_action_noise(
+        td3.get("action_noise", {}), action_dim)
+
+    model.gradient_steps = int(td3["gradient_steps"])
+    print(f"[load] Resumed with learning_rate={new_lr}, "
+          f"action_noise={td3.get('action_noise', {})}, "
+          f"gradient_steps={model.gradient_steps}")
+
     if reset_buffer:
         model.replay_buffer.reset()
         print("[load] Replay buffer cleared — starting fresh experience collection.")

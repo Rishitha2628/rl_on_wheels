@@ -1,6 +1,6 @@
 <?xml version="1.0" ?>
 <!--
-  Ignition Fortress world — drlnav-style stage (auto-generated).
+  Ignition Fortress world — stage (auto-generated).
   Robot is spawned here permanently; reset_node teleports it each episode.
   Goal marker sphere is spawned/deleted each episode via gz-transport.
 -->
@@ -77,7 +77,7 @@
       </link>
     </model>
 
-    <!-- ── drlnav outer walls (5x5 arena, walls at ±2.425) ── -->
+    <!-- ── outer walls (5x5 arena, walls at ±2.425) ── -->
     <model name="outer_wall_1">
       <static>true</static>
       <pose>-2.425 0 0 0 0 1.5708</pose>
@@ -126,7 +126,7 @@
         </visual>
       </link>
     </model>
-    <!-- ── drlnav moving obstacles (animated by dynamic_obstacle_node) ── -->
+    <!-- ── moving obstacles (animated by dynamic_obstacle_node) ── -->
     <model name="moving_obs_1">
       <static>true</static>
       <pose>2 2 0 0 0 0</pose>

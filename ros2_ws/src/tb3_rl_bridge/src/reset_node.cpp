@@ -81,17 +81,17 @@ public:
     world_name_    = declare_parameter("world_name", std::string("empty"));
     n_obstacles_   = declare_parameter("n_obstacles", 0);
 
-    // drlnav-style: fixed robot spawn each episode, random goal only.
-    // Default values match drlnav's stage SDFs (robot at -0.7, 0, facing +x).
+    // Fixed robot spawn each episode, random goal only.
+    // Default spawn: robot at (-0.7, 0), facing +x (matches stage 4-10 SDFs).
     // Set fixed_spawn:=false to revert to random robot spawn.
     fixed_spawn_   = declare_parameter("fixed_spawn",  true);
     spawn_x_       = declare_parameter("spawn_x",     -0.7);
     spawn_y_       = declare_parameter("spawn_y",      0.0);
     spawn_theta_   = declare_parameter("spawn_theta",  0.0);
 
-    // drlnav goal-validity parameters
-    //   ARENA_LENGTH = 4.2 → arena bounds ±2.1
-    //   NO_GOAL_SPAWN_MARGIN = 0.3 inflates each inner-wall rectangle.
+    // Goal-validity parameters:
+    //   arena_length = 4.2 → arena bounds ±2.1
+    //   no-goal-spawn margin = 0.3 inflates each inner-wall rectangle.
     arena_length_  = declare_parameter("arena_length", 4.2);
     arena_width_   = declare_parameter("arena_width",  4.2);
     stage_num_     = declare_parameter("stage",        1);
@@ -149,7 +149,7 @@ private:
     RCLCPP_INFO(get_logger(), "handle_reset: spawn_only=%d random_pose=%d radius=%.2f",
                 req->spawn_only, req->random_pose, req->goal_radius);
 
-    // ── drlnav successive-goals path: spawn new goal only, don't teleport ──
+    // ── Successive-goals path: spawn new goal only, don't teleport robot ──
     if (req->spawn_only) {
       // env_bridge now tracks robot in WORLD frame (via Ignition's pose feed),
       // so we use the same /odom subscriber's most-recent reading as a proxy
@@ -243,13 +243,13 @@ private:
   using XY = std::pair<float, float>;
   static std::string obs_name(int i) { return "dyn_obs_" + std::to_string(i); }
 
-  // drlnav generate_dynamic_goal_pose port — line-by-line match:
-  //   ring_position = random.uniform(0, 1)
-  //   origin = radius + numpy.random.normal(0, 0.1)
+  // Sample a goal at a noisy radius around (rx, ry):
+  //   ring_position = U(0, 1)
+  //   origin = radius + N(0, 0.1)
   //   goal = robot + (cos(2*pi*ring_position), sin(2*pi*ring_position)) * origin
   //   retry up to 100 times if not in arena bounds.
-  // Noise is RE-SAMPLED on every retry (drlnav does this — important so a
-  // bad radius noise doesn't lock out all 100 attempts).
+  // Noise is RE-SAMPLED on every retry so a bad radius noise doesn't lock
+  // out all 100 attempts.
   void sample_goal_near(float rx, float ry, float radius,
                         float & gx, float & gy)
   {
@@ -263,9 +263,9 @@ private:
       gy = ry + origin * std::sin(th);
       if (goal_is_in_arena(gx, gy)) return;
     }
-    // After 100 failures, clamp into bounds. drlnav does a full sim reset
-    // here, but we don't — that would discard the policy's mid-episode
-    // momentum, which is the whole point of successive goals.
+    // After 100 failures, clamp into bounds (we don't do a full sim reset
+    // here — that would discard the policy's mid-episode momentum, which
+    // is the whole point of successive goals).
     gx = std::clamp(gx,
                     static_cast<float>(x_min_) + 0.3f,
                     static_cast<float>(x_max_) - 0.3f);
@@ -274,11 +274,11 @@ private:
                     static_cast<float>(y_max_) - 0.3f);
   }
 
-  // drlnav goal_is_valid port — checks arena bounds AND every inner-wall
-  // rectangle (inflated by NO_GOAL_SPAWN_MARGIN = 0.3).
+  // Goal validity check — arena bounds AND every inner-wall rectangle
+  // (inflated by the no-goal-spawn margin = 0.3).
   bool goal_is_in_arena(float gx, float gy) const
   {
-    // Arena bounds: drlnav's ARENA_LENGTH/2 = 2.1
+    // Arena bounds: arena_length / 2 = 2.1
     const float half_x = static_cast<float>(arena_length_) / 2.0f;
     const float half_y = static_cast<float>(arena_width_)  / 2.0f;
     if (gx >  half_x || gx < -half_x) return false;
@@ -294,9 +294,9 @@ private:
   }
 
   // Build the obstacle rectangle list for goal_is_valid.
-  // Source: drlnav inner_walls/model.sdf — 7 walls, each 1 m × 0.15 m × 0.5 m
-  // box, inflated by NO_GOAL_SPAWN_MARGIN on every side. Stages 4, 5, 7-10
-  // include these inner walls; other stages get an empty list.
+  // 7 inner walls, each 1 m × 0.15 m × 0.5 m, inflated by the
+  // no-goal-spawn margin on every side. Stages 4, 5, 7-10 include
+  // these inner walls; other stages get an empty list.
   void build_obstacle_rectangles(int stage)
   {
     obstacle_rectangles_.clear();
@@ -304,7 +304,7 @@ private:
                                   (stage >= 7 && stage <= 10));
     if (!has_inner_walls) return;
 
-    constexpr float MARGIN = 0.3f;          // drlnav NO_GOAL_SPAWN_MARGIN
+    constexpr float MARGIN = 0.3f;          // no-goal-spawn margin
     constexpr float WALL_L = 1.0f;          // inner wall length
     constexpr float WALL_W = 0.15f;         // inner wall thickness
     struct WallSpec { float x, y, yaw; };
@@ -359,11 +359,10 @@ private:
     oy = reset_post_odom_y_ + sa * dwx + ca * dwy;
   }
 
-  // drlnav generate_goal_pose port — exact match for stages 1-12.
+  // Per-stage goal generation:
   // - Stages 1, 2, 3, 6, 10: random in [-1.5, 1.5] at 0.1 granularity
-  // - Stages 4, 5, 7      : 15-position fixed goal list
-  // - Stages 8, 9, 12     : 17-position fixed goal list
-  // - Stage  11           : 6-position fixed goal list (large house)
+  // - Stages 4, 5, 7       : 15-position fixed goal list
+  // - Stages 8, 9          : 17-position fixed goal list
   // Loop until Manhattan distance from previous goal >= 2.0 (or 100 tries).
   void sample_all_poses(float & rx, float & ry, float & rtheta,
                         float & gx, float & gy,
@@ -374,9 +373,9 @@ private:
 
     // ── Robot pose ────────────────────────────────────────────────────────
     if (fixed_spawn_) {
-      // drlnav-exact per-stage spawn:
+      // Per-stage spawn:
       //   Stages 1-3 → (0.0, 0.0, 0.0)   (arena center)
-      //   Stages 4-10 → (-0.7, 0.0, 0.0) (offset; matches drlnav stage SDFs)
+      //   Stages 4-10 → (-0.7, 0.0, 0.0) (offset to clear inner wall 7)
       if (stage_num_ >= 1 && stage_num_ <= 3) {
         rx = 0.0f; ry = 0.0f; rtheta = 0.0f;
       } else if (stage_num_ >= 4 && stage_num_ <= 10) {
@@ -396,8 +395,8 @@ private:
       rtheta = dtheta(rng_);
     }
 
-    // ── Goal pose (drlnav generate_goal_pose, exact) ──────────────────────
-    // Stage-specific fixed lists from drl_gazebo.py:
+    // ── Goal pose ─────────────────────────────────────────────────────────
+    // Stage-specific fixed goal lists:
     static const std::vector<XY> STAGE_4_5_7_GOALS = {
       { 1.0f,  0.0f}, { 2.0f, -1.5f}, { 0.0f, -2.0f}, { 2.0f,  2.0f}, { 0.8f,  2.0f},
       {-1.9f,  1.9f}, {-1.9f,  0.2f}, {-1.9f, -0.5f}, {-2.0f, -2.0f}, {-0.5f, -1.0f},
@@ -426,7 +425,7 @@ private:
         gx = dgrid(rng_) / 10.0f;
         gy = dgrid(rng_) / 10.0f;
       }
-      // drlnav Manhattan distance >= 2.0 from PREVIOUS goal
+      // Manhattan distance >= 2.0 from PREVIOUS goal
       if (std::abs(prev_goal_x_ - gx) + std::abs(prev_goal_y_ - gy) >= 2.0f) {
         break;
       }
@@ -594,12 +593,12 @@ private:
   double min_dist_, sphere_radius_;
   bool   fixed_spawn_;
   double spawn_x_, spawn_y_, spawn_theta_;
-  // drlnav goal validity parameters
+  // Goal validity parameters
   double arena_length_, arena_width_;
   int    stage_num_;
   std::vector<Rect> obstacle_rectangles_;
 
-  // drlnav: last goal published this episode — used for Manhattan-distance
+  // Last goal published this episode — used for Manhattan-distance
   // constraint on the NEXT goal (ensures consecutive goals are diverse).
   float prev_goal_x_ = 0.0f;
   float prev_goal_y_ = 0.0f;

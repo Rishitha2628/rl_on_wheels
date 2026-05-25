@@ -66,8 +66,7 @@ public:
       sub_opts);
 
     // Moving-obstacle world poses (published by dynamic_obstacle_node).
-    // Lets us compute geometric robot-to-obstacle distance for r_obstacle,
-    // exactly like drlnav's /obstacle/odom_obs feed.
+    // Lets us compute geometric robot-to-obstacle distance for r_obstacle.
     obstacles_sub_ = create_subscription<geometry_msgs::msg::PoseArray>(
       "/obstacle_poses", 10,
       [this](geometry_msgs::msg::PoseArray::ConstSharedPtr msg) {
@@ -108,7 +107,7 @@ public:
       rmw_qos_profile_services_default, cb_group);
 
     // Subscribe to Ignition's scene-broadcaster pose feed for the robot's
-    // TRUE world pose (matches drlnav's effective odom — no DiffDrive drift).
+    // TRUE world pose (avoids DiffDrive odom drift).
     std::string world_name = declare_parameter("world_name", std::string("empty"));
     robot_model_name_      = declare_parameter("robot_model_name",
                                                std::string("waffle_pi"));
@@ -198,7 +197,7 @@ private:
     std::lock_guard<std::mutex> lk(mtx_);
     goal_x_ = static_cast<float>(msg->pose.position.x);
     goal_y_ = static_cast<float>(msg->pose.position.y);
-    new_goal_ = true;     // drlnav goal_pose_callback equivalent
+    new_goal_ = true;
     ++goal_seq_;          // monotonic counter — Python's wait_new_goal polls this
     // New episode: clear any stale done/reward state that arrived between
     // the previous episode ending and this goal being published.
@@ -287,7 +286,7 @@ private:
     ++step_count_;
     float _dx = robot_x_ - goal_x_, _dy = robot_y_ - goal_y_;
     float _dist = std::sqrt(_dx * _dx + _dy * _dy);
-    // drlnav grace period — first GRACE_STEPS post-reset don't trigger termination,
+    // Grace period — first GRACE_STEPS post-reset don't trigger termination,
     // so phantom collisions from teleport settling can't end the episode prematurely.
     const int GRACE_STEPS = 30;
     if (step_count_ > GRACE_STEPS && _dist < static_cast<float>(goal_tolerance_)) {
@@ -321,9 +320,9 @@ private:
     }
     bool  progress_gated_flag = (front_min_m <= clearance_threshold);
 
-    // drlnav-style stop-on-episode-end: when the robot reaches a goal or
-    // collides, publish a zero cmd_vel BEFORE returning. Otherwise DiffDrive
-    // keeps applying the previous action through the wait_new_goal /
+    // Stop-on-episode-end: when the robot reaches a goal or collides,
+    // publish a zero cmd_vel BEFORE returning. Otherwise DiffDrive keeps
+    // applying the previous action through the wait_new_goal /
     // time.sleep(0.5) window in the Python env — robot drifts past the goal
     // and into walls during the goal-switch.
     if (episode_done_) {
@@ -331,7 +330,7 @@ private:
       cmd_vel_pub_->publish(stop);
     }
 
-    // ── reward (drlnav get_reward_A port) ──────────────────────────────────
+    // ── reward shaping ─────────────────────────────────────────────────────
     // Body-frame goal angle, wrapped to [-pi, pi] for r_yaw.
     float dx_g = goal_x_ - robot_x_;
     float dy_g = goal_y_ - robot_y_;
@@ -361,10 +360,9 @@ private:
       float d0         = std::max(goal_dist_initial_, 0.05f);
       float r_distance = 2.0f * d0 / (d0 + _dist) - 1.0f;
 
-      // r_obstacle (drlnav exact): geometric distance from robot to nearest
-      // MOVING obstacle. Fires at < 0.22 m. Wall proximity is intentionally
-      // excluded — only moving cylinders trigger this penalty, matching
-      // drlnav's obstacle_distance check.
+      // r_obstacle: geometric distance from robot to nearest MOVING
+      // obstacle. Fires at < 0.22 m. Wall proximity is intentionally
+      // excluded — only moving cylinders trigger this penalty.
       // When obstacle_positions_ is empty (stages 1, 2 — no moving obstacles)
       // this defaults to 0 (no penalty).
       float min_obs_dist = std::numeric_limits<float>::infinity();
@@ -376,7 +374,7 @@ private:
       }
       float r_obstacle = (min_obs_dist < 0.22f) ? -20.0f : 0.0f;
 
-      // Constant per-step penalty (drlnav: -1). Encourages task completion.
+      // Constant per-step penalty (-1) — encourages task completion.
       reward = r_yaw + r_vangular + r_vlinear + r_distance + r_obstacle - 1.0f;
 
       // Telemetry: report the shaping term most directly tied to progress.
@@ -422,7 +420,7 @@ private:
   float prev_dist_        = 0.0f;
   float prev_min_lidar_   = 999.0f;
   float goal_dist_initial_ = 1.0f;  // d0 for r_distance shaping; set in on_goal()
-  bool  new_goal_         = false;  // drlnav: flipped to true on /goal_pose receipt
+  bool  new_goal_         = false;  // flipped to true on /goal_pose receipt
   uint32_t goal_seq_      = 0;      // monotonic counter, increments on each on_goal
 
   // Parameters
@@ -437,11 +435,11 @@ private:
   double clearance_threshold_;
 
   // Moving-obstacle world positions (from dynamic_obstacle_node), used by
-  // r_obstacle to fire the drlnav-style geometric proximity penalty.
+  // r_obstacle to fire the geometric proximity penalty.
   std::vector<std::pair<float, float>> obstacle_positions_;
 
   // Ignition pose subscriber — truth source for robot world pose
-  // (replaces drifted DiffDrive /odom for position tracking).
+  // (avoids DiffDrive /odom drift).
   ignition::transport::Node ign_node_;
   std::string               robot_model_name_;
 

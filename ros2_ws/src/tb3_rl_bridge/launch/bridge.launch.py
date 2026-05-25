@@ -1,9 +1,9 @@
-"""Launch a drlnav-style training stage.
+"""Launch a training stage.
 
 Usage:
     ros2 launch tb3_rl_bridge bridge.launch.py stage:=4
 
-Stages (matching tomasvr/turtlebot3_drlnav):
+Stages:
     1   — empty arena
     2,3 — 4 static cylinders
     4   — inner walls + 2 moving obstacles  (canonical training stage)
@@ -26,38 +26,38 @@ from launch_ros.actions import Node
 # dynamic_obstacle_node launched for that stage.
 #
 # motion_mode:
-#   "drlnav" → KEYS_1..KEYS_6 from drlnav obstacle{1..6}.cc (large paths)
-#   "stage3" → small-amplitude oscillations (libobstacles.so equivalent)
+#   "keyframe" → KEYS_1..KEYS_6 large-path animations
+#   "stage3"   → small-amplitude oscillations
 # base_x / base_y: world positions (must match moving_obs_N <pose> in SDF)
 STAGE_OBSTACLES = {
-    "1":  {"active": "", "motion_mode": "drlnav",
+    "1":  {"active": "", "motion_mode": "keyframe",
            "base_x": [], "base_y": []},
-    "2":  {"active": "", "motion_mode": "drlnav",
+    "2":  {"active": "", "motion_mode": "keyframe",
            "base_x": [], "base_y": []},
     # Stage 3 — 4 cylinders at (±1, ±1) doing small local oscillations.
     "3":  {"active": "1,2,3,4", "motion_mode": "stage3",
            "base_x": [-1.0, -1.0,  1.0, 1.0],
            "base_y": [-1.0,  1.0, -1.0, 1.0]},
-    # Stages 4-10 — drlnav-exact keyframe paths.
-    "4":  {"active": "1,2", "motion_mode": "drlnav",
+    # Stages 4-10 — keyframe paths.
+    "4":  {"active": "1,2", "motion_mode": "keyframe",
            "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
            "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
-    "5":  {"active": "1,2,3,4,5,6", "motion_mode": "drlnav",
+    "5":  {"active": "1,2,3,4,5,6", "motion_mode": "keyframe",
            "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
            "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
-    "6":  {"active": "1,2,3,4,5,6", "motion_mode": "drlnav",
+    "6":  {"active": "1,2,3,4,5,6", "motion_mode": "keyframe",
            "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
            "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
-    "7":  {"active": "1,2", "motion_mode": "drlnav",
+    "7":  {"active": "1,2", "motion_mode": "keyframe",
            "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
            "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
-    "8":  {"active": "1,2", "motion_mode": "drlnav",
+    "8":  {"active": "1,2", "motion_mode": "keyframe",
            "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
            "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
-    "9":  {"active": "1,2", "motion_mode": "drlnav",
+    "9":  {"active": "1,2", "motion_mode": "keyframe",
            "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
            "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
-    "10": {"active": "1,2", "motion_mode": "drlnav",
+    "10": {"active": "1,2", "motion_mode": "keyframe",
            "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
            "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
 }
@@ -69,7 +69,7 @@ def generate_launch_description():
 
     stage           = LaunchConfiguration("stage",            default="4")
     use_sim_time    = LaunchConfiguration("use_sim_time",     default="true")
-    collision_thr   = LaunchConfiguration("collision_threshold", default="0.13")  # drlnav THRESHOLD_COLLISION
+    collision_thr   = LaunchConfiguration("collision_threshold", default="0.13")
     max_lidar_range = LaunchConfiguration("max_lidar_range",  default="3.5")
     lidar_bins      = LaunchConfiguration("lidar_bins",       default="36")
     step_duration   = LaunchConfiguration("step_duration",    default="0.1")
@@ -97,7 +97,7 @@ def generate_launch_description():
 
     nodes = [
         DeclareLaunchArgument("stage",               default_value="4",
-                              description="drlnav stage number 1-10"),
+                              description="Stage number 1-10"),
         DeclareLaunchArgument("use_sim_time",        default_value="true"),
         DeclareLaunchArgument("collision_threshold", default_value="0.13"),
         DeclareLaunchArgument("max_lidar_range",     default_value="3.5"),
@@ -134,9 +134,9 @@ def generate_launch_description():
                 "max_lidar_range": max_lidar_range,
                 "lidar_bins": lidar_bins,
                 "collision_threshold": collision_thr,
-                "goal_tolerance": 0.20,                # drlnav THREHSOLD_GOAL
+                "goal_tolerance": 0.20,
                 "step_duration": step_duration,
-                "min_linear_vel":  0.0,    # drlnav ENABLE_BACKWARD=False
+                "min_linear_vel":  0.0,    # no backward motion
                 "max_linear_vel":  0.22,
                 "max_angular_vel": 2.0,
                 "clearance_threshold": 0.8,
@@ -152,7 +152,7 @@ def generate_launch_description():
                 "use_sim_time": use_sim_time,
                 "tb3_model": "waffle_pi",
                 "world_name": "empty",
-                # drlnav arena bounds: walls at ±2.425, clear inner area ≈ [-2.0, 2.0]
+                # Arena bounds: walls at ±2.425, clear inner area ≈ [-2.0, 2.0]
                 "world_x_min": -2.0,
                 "world_x_max":  2.0,
                 "world_y_min": -2.0,
@@ -162,17 +162,17 @@ def generate_launch_description():
                 # edge marks the trigger zone (robot touching sphere = success).
                 "goal_sphere_radius": 0.20,
                 "n_obstacles": 0,
-                # drlnav-style fixed robot spawn. spawn_x/y/theta below are
-                # used only when reset_node's per-stage override doesn't fire
-                # (i.e., the stage isn't recognized). drlnav uses (0,0) for
-                # stages 1-3 and (-0.7, 0) for stages 4-10 — reset_node
-                # picks the right one based on the `stage` param.
+                # Fixed robot spawn. spawn_x/y/theta below are used only
+                # when reset_node's per-stage override doesn't fire (i.e.,
+                # the stage isn't recognized). Stages 1-3 spawn at (0, 0)
+                # and stages 4-10 at (-0.7, 0) — reset_node picks the
+                # right one based on the `stage` param.
                 "fixed_spawn": True,
                 "spawn_x":    -0.7,
                 "spawn_y":     0.0,
                 "spawn_theta": 0.0,
-                # drlnav goal validity — needs stage to know which
-                # inner-wall rectangles to forbid.
+                # Goal validity needs stage to know which inner-wall
+                # rectangles to forbid.
                 "arena_length": 4.2,
                 "arena_width":  4.2,
                 "stage":        stage,

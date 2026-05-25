@@ -1,10 +1,7 @@
-// dynamic_obstacle_node — ports drlnav's keyframed PoseAnimation paths
-// to Ignition Fortress via /world/<name>/set_pose. Each obstacle has a
-// fixed base position (set in the stage SDF); the keyframes are relative
-// translations from that base, looped indefinitely.
-//
-// Source: src/turtlebot3_simulations/turtlebot3_gazebo/models/
-//         turtlebot3_drl_world/obstacle_plugin/obstacle{1..6}.cc
+// dynamic_obstacle_node — drives keyframed PoseAnimation paths for moving
+// obstacles via Ignition Fortress /world/<name>/set_pose. Each obstacle
+// has a fixed base position (set in the stage SDF); the keyframes are
+// relative translations from that base, looped indefinitely.
 //
 // The launch file selects which obstacles to animate (1-based indices).
 // Stage 1-3   → none
@@ -35,8 +32,7 @@ struct ObstacleSpec {
   std::vector<Keyframe> keys;        // sorted by t; last == cycle end
 };
 
-// drlnav obstacle keyframe tables (translations relative to base pose).
-// Numbers come from obstacle{1..6}.cc.
+// Obstacle keyframe tables (translations relative to base pose).
 static const std::vector<Keyframe> KEYS_1 = {
   {  0,  0.0,  0.0}, { 10, -0.5, -1.0}, { 50, -3.5, -1.0},
   { 70, -3.7, -3.0}, { 90, -3.5, -1.0}, {130, -0.5, -1.0},
@@ -71,10 +67,9 @@ static const std::vector<Keyframe> KEYS_6 = {
   {130, -3.0, -1.8},{145, -2.5,  1.0}, {170,  0.0,  0.0},
 };
 
-// Stage-3 small-amplitude oscillations. drlnav's libobstacles.so animates
-// each obstacle within a small radius of its base; we approximate it with
-// 4 different phase-offset oscillations (±0.4 m, periods 12-18 s) so the
-// cylinders don't move in lockstep.
+// Stage-3 small-amplitude oscillations. Each obstacle moves within a small
+// radius of its base via 4 different phase-offset oscillations
+// (±0.4 m, periods 12-18 s) so the cylinders don't move in lockstep.
 static const std::vector<Keyframe> KEYS_S3_1 = {  // N-S, 16s
   {  0, 0.0,  0.0}, {  4, 0.0,  0.4}, {  8, 0.0, 0.0},
   { 12, 0.0, -0.4}, { 16, 0.0,  0.0},
@@ -92,7 +87,7 @@ static const std::vector<Keyframe> KEYS_S3_4 = {  // anti-diagonal, 12s
   {  9, -0.3,  0.3}, { 12, 0.0, 0.0},
 };
 
-static const std::vector<Keyframe> & keys_for_drlnav(int idx)
+static const std::vector<Keyframe> & keys_for_keyframe(int idx)
 {
   switch (idx) {
     case 1: return KEYS_1;
@@ -125,10 +120,10 @@ public:
     world_name_  = declare_parameter("world_name",     std::string("empty"));
     update_rate_ = declare_parameter("update_rate_hz", 20.0);
     z_height_    = declare_parameter("obs_z",          0.25);
-    // "drlnav" (default) → KEYS_1..KEYS_6 from obstacle{1..6}.cc
-    // "stage3"          → small-amplitude oscillations for the 4 cylinders
-    //                      at (±1, ±1) (drlnav libobstacles.so equivalent)
-    motion_mode_ = declare_parameter("motion_mode", std::string("drlnav"));
+    // "keyframe" (default) → KEYS_1..KEYS_6 large-path animations
+    // "stage3"             → small-amplitude oscillations for the 4 cylinders
+    //                        at (±1, ±1)
+    motion_mode_ = declare_parameter("motion_mode", std::string("keyframe"));
 
     // active_obstacles: comma-separated indices like "1,2" or "1,2,3,4,5,6".
     std::string active_str = declare_parameter("active_obstacles", std::string(""));
@@ -143,7 +138,7 @@ public:
 
     // Publish each moving obstacle's current world pose so env_bridge_node
     // can compute geometric robot-to-obstacle distance for the r_obstacle
-    // reward term (drlnav-style /obstacle/odom_obs equivalent).
+    // reward term.
     obstacle_pose_pub_ = create_publisher<geometry_msgs::msg::PoseArray>(
       "/obstacle_poses", 10);
 
@@ -178,7 +173,7 @@ private:
         spec.base_y = (idx - 1 < (int)base_y.size()) ? base_y[idx - 1] : 0.0;
         spec.keys   = (motion_mode_ == "stage3")
                       ? keys_for_stage3(idx)
-                      : keys_for_drlnav(idx);
+                      : keys_for_keyframe(idx);
         obstacles_.push_back(spec);
       } catch (...) { /* skip bad tokens */ }
     }

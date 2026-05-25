@@ -152,17 +152,17 @@ class TurtleBot3Env(gym.Env):
             dtype = np.float32,
         )
 
-        # ── drlnav-style successive goals + adaptive difficulty radius ───────
+        # ── Successive goals + adaptive difficulty radius ────────────────────
         self._successive_goals = bool(cfg_env.get("successive_goals", False))
         self._diff_radius      = float(cfg_env.get("difficulty_radius_init", 1.0))
         self._diff_min         = float(cfg_env.get("difficulty_radius_min", 0.5))
         self._diff_max         = float(cfg_env.get("difficulty_radius_max", 4.0))
         self._diff_grow        = float(cfg_env.get("difficulty_grow",   1.01))
         self._diff_shrink      = float(cfg_env.get("difficulty_shrink", 0.99))
-        # drlnav task_succeed vs task_fail dispatch: tracks whether the
-        # previous episode ended in a goal-reach. If so, reset() spawns a
-        # new goal around the robot's current pose (no teleport). Otherwise
-        # reset() does a full sim reset (teleport robot to spawn).
+        # Task_succeed vs task_fail dispatch: tracks whether the previous
+        # episode ended in a goal-reach. If so, reset() spawns a new goal
+        # around the robot's current pose (no teleport). Otherwise reset()
+        # does a full sim reset (teleport robot to spawn).
         self._was_success      = False
 
         # ── ROS2 client ───────────────────────────────────────────────────────
@@ -192,9 +192,9 @@ class TurtleBot3Env(gym.Env):
         except RuntimeError:
             seq_before = 0
 
-        # drlnav task_succeed path: previous episode ended in goal-reach,
-        # so the robot stays put — just spawn a new goal at difficulty
-        # radius around its current pose. No teleport.
+        # Task_succeed path: previous episode ended in goal-reach, so the
+        # robot stays put — just spawn a new goal at difficulty radius
+        # around its current pose. No teleport.
         if self._successive_goals and self._was_success:
             try:
                 self._client.reset_episode(
@@ -207,16 +207,14 @@ class TurtleBot3Env(gym.Env):
                 print(f"[env] spawn_only failed: {e}; falling back to full reset.")
                 obs = None
 
-        # drlnav task_fail path: previous episode ended in collision/timeout,
-        # OR this is the first episode, OR successive goals are disabled.
+        # Task_fail path: previous episode ended in collision/timeout, OR
+        # this is the first episode, OR successive goals are disabled.
         # Teleport robot back to spawn and sample a random arena goal.
         # NOTE: removed the old "retry up to 10× if lidar too close" loop.
         # The lidar sits 6 cm behind robot center, so at fixed_spawn (-0.7, 0)
         # the reading to wall 7 (x=-1.125) was 0.36 m, just below the
-        # safe_norm threshold of 0.4 m. That triggered 10 cascading resets per
-        # episode-end, creating the rapid-goal-change pattern. drlnav does
-        # NOT have this check — they trust the policy to navigate even if
-        # spawn happens near an obstacle.
+        # safe_norm threshold of 0.4 m. That triggered 10 cascading resets
+        # per episode-end, creating a rapid-goal-change pattern.
         if obs is None:
             try:
                 reset_res = self._client.reset_episode(random_pose=True)
@@ -254,8 +252,8 @@ class TurtleBot3Env(gym.Env):
         truncated  = self._step_count >= self._max_steps
         is_success = (res.info == "goal_reached")
 
-        # drlnav adaptive difficulty radius + task_succeed/task_fail dispatch
-        # for the NEXT reset(): set _was_success so reset() picks the right
+        # Adaptive difficulty radius + task_succeed/task_fail dispatch for
+        # the NEXT reset(): set _was_success so reset() picks the right
         # branch (spawn_only vs full teleport).
         if is_success:
             self._diff_radius = min(self._diff_max,

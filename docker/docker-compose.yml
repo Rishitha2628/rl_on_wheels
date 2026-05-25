@@ -25,7 +25,7 @@ services:
     environment:
       <<: *ros-env
       HEADLESS: "${HEADLESS:-0}"
-      STAGE: "${STAGE:-4}"     # drlnav stage 1-10
+      STAGE: "${STAGE:-4}"     # stage 1-10
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ../ros2_ws/src:/ros2_ws/src

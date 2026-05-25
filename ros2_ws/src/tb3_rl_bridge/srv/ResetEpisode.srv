@@ -5,7 +5,7 @@ float32 spawn_y
 float32 spawn_theta
 float32 goal_x             # ignored when random_pose = true
 float32 goal_y
-# drlnav-style successive goals: when true, do NOT teleport the robot,
+# Successive goals: when true, do NOT teleport the robot,
 # only spawn a new goal at radius `goal_radius` around the current pose.
 # Used to chain many goals per episode without losing accumulated learning.
 bool spawn_only

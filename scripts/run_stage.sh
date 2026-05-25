@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run sim + TD3 training for a given drlnav stage.
+# Run sim + TD3 training for a given stage.
 #
 # Usage:
 #   ./scripts/run_stage.sh <stage> [checkpoint_path]

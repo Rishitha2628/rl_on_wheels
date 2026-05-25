@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Training entrypoint for TD3 on TurtleBot3 (drlnav-style: frame-stack + action-repeat)."""
+"""Training entrypoint for TD3 on TurtleBot3 (frame-stack + action-repeat)."""
 
 from __future__ import annotations
 
@@ -22,10 +22,10 @@ from envs.ros2_gym_env import TurtleBot3Env
 class ActionRepeat(gym.Wrapper):
     """Hold the agent's action for `n` underlying env steps.
 
-    Matches drlnav's FRAME_SKIP=4 — the policy decides at a slower
-    cadence than the simulator runs, so each decision commits the robot
-    to a direction for a meaningful chunk of time. Rewards are summed
-    over the repeat window; the final transition's done/info is returned.
+    The policy decides at a slower cadence than the simulator runs, so
+    each decision commits the robot to a direction for a meaningful chunk
+    of time. Rewards are summed over the repeat window; the final
+    transition's done/info is returned.
     """
 
     def __init__(self, env: gym.Env, n: int):
