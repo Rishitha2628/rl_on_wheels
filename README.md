@@ -48,7 +48,7 @@ docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
 
 ## Quickstart
 
-### 1. Build the Docker image
+### 1. Build the Docker image (one-time)
 
 ```bash
 docker compose -f docker/docker-compose.yml build
@@ -60,61 +60,67 @@ docker compose -f docker/docker-compose.yml build
 xhost +local:root
 ```
 
-### 3. Start the simulation
+### 3. Terminal 1 — launch the simulator
 
-Pick a stage via the `STAGE` env var (default: 4). Sim runs in its own terminal:
+Get a shell inside the sim container, then launch the bridge for your chosen stage:
 
 ```bash
-STAGE=4 docker compose -f docker/docker-compose.yml up sim
+docker compose -f docker/docker-compose.yml run --rm --name sim sim bash
 ```
 
-Headless (no Ignition GUI):
+Inside the container:
 
 ```bash
-HEADLESS=1 STAGE=4 docker compose -f docker/docker-compose.yml up sim
+source /opt/ros/humble/setup.bash
+source /ros2_ws/install/setup.bash
+ros2 launch tb3_rl_bridge bridge.launch.py stage:=4
 ```
 
-### 4. Train TD3 (separate terminal)
+### 4. Terminal 2 — run training
 
-Fresh run:
+In a new host terminal, exec into the same container and run training:
 
 ```bash
-docker compose -f docker/docker-compose.yml run --rm train_td3
+docker exec -it sim bash
 ```
 
-Resume from a checkpoint:
+Inside the container:
 
 ```bash
-CHECKPOINT=/checkpoints/td3_tb3_214000_steps \
-  docker compose -f docker/docker-compose.yml run --rm train_td3
+# Fresh run
+python3 /rl/train_td3.py --config /configs/td3.yaml
+
+# Resume from a checkpoint
+python3 /rl/train_td3.py --config /configs/td3.yaml \
+    --checkpoint /checkpoints/td3_tb3_214000_steps
 ```
 
 ### 5. Rebuild after C++ changes
 
-If you edit any `.cpp` under `tb3_rl_bridge/src/`, rebuild inside the
-running sim container:
+If you edit any `.cpp` under `tb3_rl_bridge/src/`, open a third terminal:
 
 ```bash
-docker exec -it $(docker ps --filter "name=sim" -q) bash
+docker exec -it sim bash
 cd /ros2_ws && colcon build --packages-select tb3_rl_bridge
 source install/setup.bash
-# then restart the sim (Ctrl-C the up command and run it again)
+# then Ctrl-C the ros2 launch in Terminal 1 and re-run it
 ```
 
 ### 6. TensorBoard
 
-Port `6007` is mapped to the `train_td3` container (SAC uses `6006`):
+From any container shell (host networking is on, so `localhost:6006` works from the host browser):
 
-```
-http://localhost:6007
+```bash
+tensorboard --logdir /logs/tensorboard --host 0.0.0.0
 ```
 
 ### 7. Evaluate a checkpoint
 
+In a container shell:
+
 ```bash
-docker exec -it $(docker ps --filter "name=sim" -q) bash
 python3 /rl/eval.py --config /configs/td3.yaml \
-  --checkpoint /checkpoints/td3_tb3_214000_steps
+    --checkpoint /checkpoints/td3_tb3_214000_steps
 ```
 
 ---
