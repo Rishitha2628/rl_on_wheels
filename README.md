@@ -3,28 +3,8 @@
 Reinforcement learning for mobile robot navigation on TurtleBot3 Waffle Pi
 in ROS2 Humble + Ignition Fortress (Gazebo Sim).
 
-Three agents are wired up — SAC (legacy), **TD3** (current focus), and PPO —
-plus a 10-stage progressive curriculum from an empty arena up through inner
-walls and moving obstacles. Sensor input is 2D LiDAR only (360 rays → 36
-normalised bins). No cameras.
-
----
-
-## Stage curriculum
-
-| Stage | World layout |
-|-------|--------------|
-| 1 | empty 5×5 m arena |
-| 2 | 4 static cylinders at (±1, ±1) |
-| 3 | 4 cylinders doing small-amplitude oscillations |
-| 4 | inner walls + 2 moving cylinders *(canonical training stage)* |
-| 5 | inner walls + 6 moving cylinders |
-| 6 | 6 moving cylinders, no inner walls |
-| 7–10 | inner walls + 2 moving cylinders (eval variants, different goal sets) |
-
-Robot spawns at `(0, 0)` for stages 1–3 and `(-0.7, 0)` for stages 4–10.
-Goal positions are stage-dependent — random sampling on the easier stages,
-fixed goal lists on stages 4, 5, 7, 8, 9.
+Three agents are wired up — SAC (legacy), **TD3** (current focus), and PPO.
+Sensor input is 2D LiDAR only (360 rays → 36 normalised bins). No cameras.
 
 ---
 
@@ -48,9 +28,7 @@ rl_on_wheels/
 │   ├── train.py / train_td3.py / train_ppo.py
 │   └── eval.py
 ├── configs/{sac_her,td3,ppo}.yaml   hyperparameters + env settings
-└── scripts/
-    ├── launch_sim.sh                in-container sim launcher
-    └── run_stage.sh                 host-side helper: `./run_stage.sh <N>`
+└── scripts/launch_sim.sh            in-container sim launcher
 ```
 
 ---
@@ -70,61 +48,73 @@ docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
 
 ## Quickstart
 
-### 1. Build the image
+### 1. Build the Docker image
+
 ```bash
 docker compose -f docker/docker-compose.yml build
 ```
 
-### 2. Allow X11 (host side)
+### 2. Allow X11 access (host side)
+
 ```bash
 xhost +local:root
 ```
 
-### 3. Train TD3 on a chosen stage
+### 3. Start the simulation
 
-The simplest path uses `scripts/run_stage.sh`, which brings up the sim and
-the trainer together:
-
-```bash
-./scripts/run_stage.sh 4                                # fresh
-./scripts/run_stage.sh 4 /checkpoints/td3_tb3_100000_steps  # resume
-```
-
-To run sim and training in separate terminals (useful for debugging):
+Pick a stage via the `STAGE` env var (default: 4). Sim runs in its own terminal:
 
 ```bash
-# terminal 1: sim
 STAGE=4 docker compose -f docker/docker-compose.yml up sim
-
-# terminal 2: training
-docker compose -f docker/docker-compose.yml run --rm train_td3
 ```
 
-Headless sim (no Ignition GUI):
+Headless (no Ignition GUI):
+
 ```bash
 HEADLESS=1 STAGE=4 docker compose -f docker/docker-compose.yml up sim
 ```
 
-### 4. TensorBoard
+### 4. Train TD3 (separate terminal)
+
+Fresh run:
+
 ```bash
-# inside the train_td3 container, port 6007 is mapped (6006 is SAC's)
-open http://localhost:6007
+docker compose -f docker/docker-compose.yml run --rm train_td3
+```
+
+Resume from a checkpoint:
+
+```bash
+CHECKPOINT=/checkpoints/td3_tb3_214000_steps \
+  docker compose -f docker/docker-compose.yml run --rm train_td3
 ```
 
 ### 5. Rebuild after C++ changes
-If you edit any `.cpp` under `tb3_rl_bridge/src/`, rebuild inside the sim
-container:
+
+If you edit any `.cpp` under `tb3_rl_bridge/src/`, rebuild inside the
+running sim container:
+
 ```bash
-docker exec -it <sim_container> bash
+docker exec -it $(docker ps --filter "name=sim" -q) bash
 cd /ros2_ws && colcon build --packages-select tb3_rl_bridge
 source install/setup.bash
-# then relaunch
+# then restart the sim (Ctrl-C the up command and run it again)
 ```
 
-### 6. Evaluate a checkpoint
+### 6. TensorBoard
+
+Port `6007` is mapped to the `train_td3` container (SAC uses `6006`):
+
+```
+http://localhost:6007
+```
+
+### 7. Evaluate a checkpoint
+
 ```bash
-CHECKPOINT=checkpoints/td3_tb3_214000_steps \
-  docker compose -f docker/docker-compose.yml run --rm eval
+docker exec -it $(docker ps --filter "name=sim" -q) bash
+python3 /rl/eval.py --config /configs/td3.yaml \
+  --checkpoint /checkpoints/td3_tb3_214000_steps
 ```
 
 ---
@@ -184,7 +174,7 @@ terminal: +2500 on goal reached, −2000 on collision
 
 | Term | Range | Purpose |
 |------|-------|---------|
-| `r_yaw = -|goal_angle|` | [−π, 0] | face the goal |
+| `r_yaw = -abs(goal_angle)` | [−π, 0] | face the goal |
 | `r_vangular = -ω²` | [−4, 0] | discourage spinning |
 | `r_vlinear = -((v_max − v) × 10)²` | [−~5, 0] | encourage forward motion |
 | `r_distance = 2·d₀/(d₀ + d) − 1` | [−1, 1] | shape progress toward goal |
@@ -192,28 +182,6 @@ terminal: +2500 on goal reached, −2000 on collision
 
 Wall proximity is handled via the collision termination (`-2000`),
 not via `r_obstacle` — only moving cylinders trigger that penalty.
-
----
-
-## Configuration highlights (TD3)
-
-All hyperparameters live in [`configs/td3.yaml`](configs/td3.yaml).
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `td3.learning_rate` | 1e-4 | Adam LR (3e-4 default; lower for fine-tune) |
-| `td3.buffer_size` | 1 000 000 | replay buffer capacity |
-| `td3.batch_size` | 128 | minibatch size |
-| `td3.tau` | 0.003 | target network soft-update rate |
-| `td3.policy_delay` | 2 | actor update every N critic updates |
-| `td3.action_noise.sigma` | 0.05 | OU exploration noise σ |
-| `td3.net_arch` | [512, 512] | hidden layers |
-| `td3.frame_stack` | 1 | number of stacked observation frames |
-| `td3.action_repeat` | 4 | hold each action for N sim steps |
-| `env.max_episode_steps` | 450 | timeout |
-| `env.collision_threshold` | 0.13 m | LiDAR min-range collision trigger |
-| `env.goal_tolerance` | 0.20 m | success radius |
-| `training.checkpoint_freq` | 2 000 | save every N steps |
 
 ---
 
