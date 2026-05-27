@@ -32,8 +32,10 @@ services:
       - ../configs:/configs:ro
       - ../scripts:/scripts:ro            # launch_sim.sh lives here
       - ../rl:/rl:ro                       # so `docker exec` can run training
+      - ../bc:/bc:ro                       # behavior cloning code
       - ../checkpoints:/checkpoints       # checkpoints written here
       - ../logs:/logs                      # tensorboard logs here
+      - ../demos:/demos                    # ros2 bag files + dataset npz
       - tb3_install:/ros2_ws/install     # persisted colcon build output
     network_mode: host
     ipc: host
