@@ -1,0 +1,58 @@
+# Behavior cloning training config.
+# The BC policy imitates Nav2 demonstrations collected via ros2 bag.
+
+bc:
+  learning_rate: 1.0e-3
+  batch_size:    256
+  epochs:        50
+  val_fraction:  0.1
+  net_arch:      [512, 512]
+
+# Same env settings as TD3 so the BC policy sees identical observations
+# at training (computed offline from the bag) and at eval time (live).
+env:
+  lidar_bins: 36
+  max_lidar_range: 3.5
+  collision_threshold: 0.13
+  tb3_model: "waffle_pi"
+  goal_tolerance: 0.20
+  max_episode_steps: 450
+  clearance_threshold: 0.8
+
+  goal_reward: 1.0
+  collision_penalty: -1.0
+  time_penalty: -0.005
+  distance_reward_scale: 1.0
+
+  min_linear_vel:   0.0
+  max_linear_vel:   0.22
+  max_angular_vel:  2.0
+
+  world_bounds: [-2.0, 2.0, -2.0, 2.0]
+  robot_min_goal_dist: 0.5
+
+  successive_goals: false
+  difficulty_radius_init: 1.0
+  difficulty_radius_min:  0.5
+  difficulty_radius_max:  4.0
+  difficulty_grow:        1.01
+  difficulty_shrink:      0.99
+
+ros2:
+  observation_service: "/get_observation"
+  step_service: "/step"
+  reset_service: "/reset_episode"
+  cmd_vel_topic: "/cmd_vel"
+  scan_topic: "/scan"
+  odom_topic: "/odom"
+  goal_pose_topic: "/goal_pose"
+  reward_topic: "/reward"
+  episode_done_topic: "/episode_done"
+  service_timeout_sec: 10.0
+  step_duration_sec: 0.1
+
+training:
+  checkpoint_dir:   "/checkpoints"
+  tensorboard_log:  "/logs/tensorboard"
+  log_interval:     100
+  save_every_epoch: 5

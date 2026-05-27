@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV ROS_DISTRO=humble
 ENV TURTLEBOT3_MODEL=waffle_pi
 
-# Ignition Fortress + TurtleBot3 ROS2 packages
+# Ignition Fortress + TurtleBot3 + Nav2 ROS2 packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-ros-gz-sim \
     ros-humble-ros-gz-bridge \
@@ -18,6 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-visualization-msgs \
     ros-humble-tf2 \
     ros-humble-tf2-geometry-msgs \
+    ros-humble-navigation2 \
+    ros-humble-nav2-bringup \
     python3-pip \
     python3-colcon-common-extensions \
     python3-rosdep \
