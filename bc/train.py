@@ -31,6 +31,28 @@ def normalize_action(a: np.ndarray, low: np.ndarray, high: np.ndarray) -> np.nda
     return 2.0 * (a - low) / (high - low) - 1.0
 
 
+# ── frame stacking ────────────────────────────────────────────────────────────
+def stack_frames(obs: np.ndarray, ep_id: np.ndarray, k: int) -> np.ndarray:
+    """Concatenate the last `k` observations within each episode.
+
+    For step i in an episode, output[i] = concat(obs[i-(k-1)], ..., obs[i-1], obs[i]).
+    Earliest entry is on the left, current frame on the right. The first (k-1)
+    steps of each episode are padded by repeating the first observation, so
+    the model always sees a fixed-shape input.
+    """
+    N, D = obs.shape
+    out = np.empty((N, k * D), dtype=np.float32)
+    for ep in np.unique(ep_id):
+        idx = np.where(ep_id == ep)[0]
+        for i, step in enumerate(idx):
+            frames = []
+            for j in range(k):
+                src_local = max(0, i - (k - 1 - j))
+                frames.append(obs[idx[src_local]])
+            out[step] = np.concatenate(frames)
+    return out
+
+
 # ── training ──────────────────────────────────────────────────────────────────
 def train(cfg_path: str, dataset_path: str) -> None:
     with open(cfg_path) as f:
@@ -47,7 +69,16 @@ def train(cfg_path: str, dataset_path: str) -> None:
     data = np.load(dataset_path)
     obs    = data["obs"].astype(np.float32)
     action = data["action"].astype(np.float32)
+    ep_id  = data["ep_id"].astype(np.int32) if "ep_id" in data.files \
+             else np.zeros(len(obs), dtype=np.int32)
     print(f"loaded {len(obs)} transitions from {dataset_path}")
+
+    # ── frame stacking ────────────────────────────────────────────────────────
+    frame_stack = int(bc_cfg.get("frame_stack", 1))
+    if frame_stack > 1:
+        print(f"stacking {frame_stack} frames per sample → "
+              f"input dim {obs.shape[1]} → {obs.shape[1] * frame_stack}")
+        obs = stack_frames(obs, ep_id, frame_stack)
 
     # Rescale demonstrator actions from env bounds → [-1, 1] (tanh output range)
     act_low  = np.array([env_cfg["min_linear_vel"], -env_cfg["max_angular_vel"]],
@@ -130,21 +161,23 @@ def train(cfg_path: str, dataset_path: str) -> None:
         if val_mse < best_val:
             best_val = val_mse
             best_path = Path(train_cfg["checkpoint_dir"]) / "bc_best.pt"
-            torch.save({"model":    model.state_dict(),
-                        "obs_dim":  obs_dim,
-                        "act_dim":  act_dim,
-                        "act_low":  act_low,
-                        "act_high": act_high,
-                        "val_mse":  val_mse}, best_path)
+            torch.save({"model":       model.state_dict(),
+                        "obs_dim":     obs_dim,
+                        "act_dim":     act_dim,
+                        "act_low":     act_low,
+                        "act_high":    act_high,
+                        "frame_stack": frame_stack,
+                        "val_mse":     val_mse}, best_path)
             print(f"  ★ new best — saved {best_path}")
 
         if epoch % save_every == 0:
             ckpt = Path(train_cfg["checkpoint_dir"]) / f"bc_epoch{epoch}.pt"
-            torch.save({"model":    model.state_dict(),
-                        "obs_dim":  obs_dim,
-                        "act_dim":  act_dim,
-                        "act_low":  act_low,
-                        "act_high": act_high}, ckpt)
+            torch.save({"model":       model.state_dict(),
+                        "obs_dim":     obs_dim,
+                        "act_dim":     act_dim,
+                        "act_low":     act_low,
+                        "act_high":    act_high,
+                        "frame_stack": frame_stack}, ckpt)
 
     print(f"done. best val_mse = {best_val:.4f}")
 

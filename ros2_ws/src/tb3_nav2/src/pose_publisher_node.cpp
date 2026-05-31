@@ -18,6 +18,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2/LinearMath/Quaternion.h"
 
@@ -38,6 +39,11 @@ public:
       [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) { on_odom(msg); });
 
     tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
+
+    // Also publish the world pose as a regular topic so it's easy to record
+    // in a bag and parse offline (bag-based BC pipeline).
+    world_pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(
+      "/robot_world_pose", 10);
 
     std::string pose_topic = "/world/" + world_name_ + "/dynamic_pose/info";
     bool ok = ign_node_.Subscribe(pose_topic, &PosePublisherNode::on_ign_pose, this);
@@ -113,6 +119,21 @@ private:
     t.transform.rotation.w = q.w();
 
     tf_broadcaster_->sendTransform(t);
+
+    // Also publish the robot's true world pose as a topic.
+    geometry_msgs::msg::PoseStamped wp;
+    wp.header.stamp = t.header.stamp;
+    wp.header.frame_id = "map";
+    wp.pose.position.x = tx;
+    wp.pose.position.y = ty;
+    wp.pose.position.z = 0.0;
+    tf2::Quaternion q2;
+    q2.setRPY(0.0, 0.0, tyaw);
+    wp.pose.orientation.x = q2.x();
+    wp.pose.orientation.y = q2.y();
+    wp.pose.orientation.z = q2.z();
+    wp.pose.orientation.w = q2.w();
+    world_pose_pub_->publish(wp);
   }
 
   std::string world_name_, robot_model_name_;
@@ -124,6 +145,7 @@ private:
   bool have_true_ = false, have_odom_ = false;
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr world_pose_pub_;
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   ignition::transport::Node ign_node_;
   rclcpp::TimerBase::SharedPtr timer_;

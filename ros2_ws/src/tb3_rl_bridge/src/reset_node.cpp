@@ -335,21 +335,25 @@ private:
   }
 
   // Build the obstacle rectangle list for goal_is_valid.
-  // 7 inner walls, each 1 m × 0.15 m × 0.5 m, inflated by the
-  // no-goal-spawn margin on every side. Stages 4, 5, 7-10 include
-  // these inner walls; other stages get an empty list.
+  // Each inner wall is 1 m × 0.15 m × 0.5 m, inflated by the no-goal-spawn
+  // margin on every side. Goal-sampling rejects any pose inside one of
+  // these rectangles, so goals never appear inside / on / behind a wall.
+  // Stages 4, 5, 7-10 share the default 7-wall set; stage 11 has its own
+  // 8-wall set matching its 7x7 SDF / map.
   void build_obstacle_rectangles(int stage)
   {
     obstacle_rectangles_.clear();
     const bool has_inner_walls = (stage == 4 || stage == 5 ||
-                                  (stage >= 7 && stage <= 10));
+                                  (stage >= 7 && stage <= 11));
     if (!has_inner_walls) return;
 
     constexpr float MARGIN = 0.3f;          // no-goal-spawn margin
     constexpr float WALL_L = 1.0f;          // inner wall length
     constexpr float WALL_W = 0.15f;         // inner wall thickness
     struct WallSpec { float x, y, yaw; };
-    static const WallSpec walls[] = {
+
+    // Default 7-wall layout for stages 4, 5, 7-10.
+    static const WallSpec walls_5x5[] = {
       { -2.0f, -1.5f,    0.0f      },
       { -0.5f, -2.0f,   -1.5708f   },
       {  1.0f, -1.0f,    1.5708f   },
@@ -358,7 +362,31 @@ private:
       { -0.5f,  1.5f,    0.0f      },
       { -1.2f,  0.092f, -1.5708f   },
     };
-    for (const auto & w : walls) {
+    // Stage 11 — 8 walls inside the 7x7 arena. Must match
+    // tb3_stage11.sdf and INNER_WALLS_STAGE11 in gen_maps.py.
+    static const WallSpec walls_stage11[] = {
+      { -1.5f,  2.0f,    0.0f      },
+      {  1.5f,  2.0f,    0.0f      },
+      { -2.0f,  0.5f,    1.5708f   },
+      {  0.5f,  0.5f,    1.5708f   },
+      {  0.0f, -1.5f,    1.5708f   },
+      {  2.0f, -0.5f,    1.5708f   },
+      { -1.5f, -2.5f,    0.0f      },
+      {  1.5f, -2.5f,    0.0f      },
+    };
+
+    const WallSpec * walls;
+    size_t n_walls;
+    if (stage == 11) {
+      walls = walls_stage11;
+      n_walls = sizeof(walls_stage11) / sizeof(walls_stage11[0]);
+    } else {
+      walls = walls_5x5;
+      n_walls = sizeof(walls_5x5) / sizeof(walls_5x5[0]);
+    }
+
+    for (size_t i = 0; i < n_walls; ++i) {
+      const auto & w = walls[i];
       bool horizontal = std::abs(w.yaw) < 1e-3f;
       float sx = horizontal ? (WALL_L + 2 * MARGIN) : (WALL_W + 2 * MARGIN);
       float sy = horizontal ? (WALL_W + 2 * MARGIN) : (WALL_L + 2 * MARGIN);
@@ -401,9 +429,11 @@ private:
   }
 
   // Random spawn + goal sampled from VALID_POSITIONS (pre-validated against
-  // all static obstacles across stages 1-10). Spawn heading is uniform in
-  // [-π, π]. Spawn and goal are required to be at least 2.0 m apart so the
-  // task is meaningful; the same pair never repeats.
+  // stages 1-10). Each pick is additionally cross-checked against the
+  // current stage's obstacle_rectangles_ — needed for stage 11 which has a
+  // different wall layout that some legacy entries fall inside of. Spawn
+  // heading is uniform in [-π, π]. Spawn and goal must be at least 2.0 m
+  // apart so the task is meaningful.
   void sample_all_poses(float & rx, float & ry, float & rtheta,
                         float & gx, float & gy,
                         std::vector<XY> & obs_pos, std::vector<float> & obs_yaw)
@@ -414,22 +444,30 @@ private:
     std::uniform_int_distribution<int> didx(0, VALID_POSITIONS.size() - 1);
     std::uniform_real_distribution<float> dtheta(-M_PI, M_PI);
 
-    // Pick spawn from the list (every position is guaranteed wall-safe).
-    auto spawn = VALID_POSITIONS[didx(rng_)];
-    rx = spawn.first;
-    ry = spawn.second;
+    // Pick spawn — retry until it passes the current stage's wall check.
+    rx = ry = 0.0f;
+    for (int tries = 0; tries < 200; ++tries) {
+      auto spawn = VALID_POSITIONS[didx(rng_)];
+      if (goal_is_in_arena(spawn.first, spawn.second)) {
+        rx = spawn.first;
+        ry = spawn.second;
+        break;
+      }
+    }
     rtheta = dtheta(rng_);
 
-    // Pick goal from the same list, repeat until it's far enough from spawn.
-    // 200 tries is plenty given the list size; bail out with whatever we have
-    // on the last iteration (this should essentially never happen).
+    // Pick goal — far enough from spawn AND clear of walls.
+    gx = gy = 0.0f;
     for (int tries = 0; tries < 200; ++tries) {
       auto g = VALID_POSITIONS[didx(rng_)];
-      gx = g.first;
-      gy = g.second;
-      float dx = gx - rx;
-      float dy = gy - ry;
-      if (std::sqrt(dx * dx + dy * dy) >= 2.0f) break;
+      if (!goal_is_in_arena(g.first, g.second)) continue;
+      float dx = g.first - rx;
+      float dy = g.second - ry;
+      if (std::sqrt(dx * dx + dy * dy) >= 2.0f) {
+        gx = g.first;
+        gy = g.second;
+        break;
+      }
     }
     prev_goal_x_ = gx;
     prev_goal_y_ = gy;

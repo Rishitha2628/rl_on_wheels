@@ -20,6 +20,7 @@ from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.descriptions import ParameterValue
 
 
 # Per-stage dynamic-obstacle configuration. Empty `active` → no
@@ -60,6 +61,11 @@ STAGE_OBSTACLES = {
     "10": {"active": "1,2", "motion_mode": "keyframe",
            "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
            "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
+    # Stage 11 — 7x7 arena, 8 interior walls + 6 keyframe cylinders. Bases
+    # scaled to ±2.8 so the cylinders cover the larger arena evenly.
+    "11": {"active": "1,2,3,4,5,6", "motion_mode": "keyframe",
+           "base_x": [2.8, -2.8,  2.8, -2.8, -2.8, 2.8],
+           "base_y": [2.8, -2.8, -2.8,  2.8,  0.0, 0.0]},
 }
 
 
@@ -74,6 +80,12 @@ def generate_launch_description():
     lidar_bins      = LaunchConfiguration("lidar_bins",       default="36")
     step_duration   = LaunchConfiguration("step_duration",    default="0.1")
     headless        = LaunchConfiguration("headless",         default="false")
+    dynamic_obstacles = LaunchConfiguration("dynamic_obstacles", default="true")
+    # "keyframe" = full per-obstacle paths (default for stages 4-10).
+    # "stage3"   = small ±0.4 m local oscillations — easier for Nav2 to navigate around.
+    motion_mode_override = LaunchConfiguration("motion_mode", default="")
+    # >1 slows the cylinders proportionally. 3 = 1/3rd speed, etc.
+    obstacle_time_scale = LaunchConfiguration("obstacle_time_scale", default="1.0")
 
     # World file resolved at launch time via substitution
     world_file = PythonExpression([
@@ -104,6 +116,16 @@ def generate_launch_description():
         DeclareLaunchArgument("lidar_bins",          default_value="36"),
         DeclareLaunchArgument("step_duration",       default_value="0.1"),
         DeclareLaunchArgument("headless",            default_value="false"),
+        DeclareLaunchArgument("dynamic_obstacles",   default_value="true",
+                              description="set to false to keep moving cylinders stationary "
+                                          "(useful for Nav2 demo collection)"),
+        DeclareLaunchArgument("motion_mode",         default_value="",
+                              description="override the per-stage motion_mode "
+                                          "(empty=use STAGE_OBSTACLES default; "
+                                          "'stage3' for small-amplitude oscillations)"),
+        DeclareLaunchArgument("obstacle_time_scale", default_value="1.0",
+                              description="multiplier for cylinder keyframe playback; "
+                                          ">1 slows obstacles (try 3.0 for Nav2-friendly speed)"),
 
         gz_server,
         gz_gui,
@@ -131,10 +153,15 @@ def generate_launch_description():
             output="screen",
             parameters=[{
                 "use_sim_time": use_sim_time,
-                "max_lidar_range": max_lidar_range,
+                # Stage 11 (7x7 arena) needs a longer lidar reach so BC sees a
+                # comparable fraction of the world per observation. Hardware
+                # max in tb3_stage11.sdf was also bumped to 6.0 m to match.
+                "max_lidar_range": ParameterValue(
+                    PythonExpression(["6.0 if '", stage, "' == '11' else 3.5"]),
+                    value_type=float),
                 "lidar_bins": lidar_bins,
                 "collision_threshold": collision_thr,
-                "goal_tolerance": 0.20,
+                "goal_tolerance": 0.40,   # match Nav2's xy_goal_tolerance — demos never drove BC closer than this
                 "step_duration": step_duration,
                 "min_linear_vel":  0.0,    # no backward motion
                 "max_linear_vel":  0.22,
@@ -152,11 +179,20 @@ def generate_launch_description():
                 "use_sim_time": use_sim_time,
                 "tb3_model": "waffle_pi",
                 "world_name": "empty",
-                # Arena bounds: walls at ±2.425, clear inner area ≈ [-2.0, 2.0]
-                "world_x_min": -2.0,
-                "world_x_max":  2.0,
-                "world_y_min": -2.0,
-                "world_y_max":  2.0,
+                # Arena bounds: walls at ±2.425 (5x5 stages) or ±3.425 (stage 11),
+                # clear inner area ≈ [-2.0, 2.0] or [-2.5, 2.5] respectively.
+                "world_x_min": ParameterValue(
+                    PythonExpression(["-2.5 if '", stage, "' == '11' else -2.0"]),
+                    value_type=float),
+                "world_x_max": ParameterValue(
+                    PythonExpression(["2.5 if '", stage, "' == '11' else 2.0"]),
+                    value_type=float),
+                "world_y_min": ParameterValue(
+                    PythonExpression(["-2.5 if '", stage, "' == '11' else -2.0"]),
+                    value_type=float),
+                "world_y_max": ParameterValue(
+                    PythonExpression(["2.5 if '", stage, "' == '11' else 2.0"]),
+                    value_type=float),
                 "robot_min_goal_dist": 0.5,
                 # Sphere radius matches goal_tolerance so the visible sphere
                 # edge marks the trigger zone (robot touching sphere = success).
@@ -173,15 +209,21 @@ def generate_launch_description():
                 "spawn_theta": 0.0,
                 # Goal validity needs stage to know which inner-wall
                 # rectangles to forbid.
-                "arena_length": 4.2,
-                "arena_width":  4.2,
+                "arena_length": ParameterValue(
+                    PythonExpression(["6.2 if '", stage, "' == '11' else 4.2"]),
+                    value_type=float),
+                "arena_width": ParameterValue(
+                    PythonExpression(["6.2 if '", stage, "' == '11' else 4.2"]),
+                    value_type=float),
                 "stage":        stage,
             }],
         ),
     ]
 
     # ── dynamic_obstacle_node launched only for stages with moving obstacles ──
-    # We register one node per stage and gate via IfCondition on the stage arg.
+    # We register one node per stage and gate via IfCondition on both the stage
+    # arg AND the dynamic_obstacles flag. dynamic_obstacles:=false keeps the
+    # cylinders sitting at their SDF positions — useful for Nav2 demo runs.
     for stage_num, cfg in STAGE_OBSTACLES.items():
         if not cfg["active"]:
             continue
@@ -190,8 +232,10 @@ def generate_launch_description():
             executable="dynamic_obstacle_node",
             name=f"dynamic_obstacle_node_stage{stage_num}",
             output="screen",
-            condition=IfCondition(
-                PythonExpression(["'", stage, "' == '", stage_num, "'"])),
+            condition=IfCondition(PythonExpression([
+                "'", stage, "' == '", stage_num,
+                "' and '", dynamic_obstacles, "' == 'true'",
+            ])),
             parameters=[{
                 "use_sim_time": use_sim_time,
                 "world_name": "empty",
@@ -201,7 +245,12 @@ def generate_launch_description():
                 # the cylinder sitting on the ground (not floating at 0.5).
                 "obs_z": 0.0,
                 "active_obstacles": cfg["active"],
-                "motion_mode":      cfg["motion_mode"],
+                # If `motion_mode` launch arg is set, use it; otherwise the
+                # per-stage default from STAGE_OBSTACLES.
+                "motion_mode": PythonExpression([
+                    "'", motion_mode_override, "' if '", motion_mode_override,
+                    "' else '", cfg["motion_mode"], "'"]),
+                "time_scale":       obstacle_time_scale,
                 "obstacle_base_x":  cfg["base_x"],
                 "obstacle_base_y":  cfg["base_y"],
             }],

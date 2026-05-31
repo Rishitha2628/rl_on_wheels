@@ -64,8 +64,22 @@ def quat_yaw(qz: float, qw: float) -> float:
 
 def compute_obs(scan_ranges: np.ndarray, robot_x: float, robot_y: float,
                 robot_yaw: float, goal_x: float, goal_y: float,
-                prev_lin_vel: float, lidar_bins: int, max_range: float
+                prev_lin_vel: float, prev_ang_vel: float,
+                lidar_bins: int, max_range: float
                 ) -> np.ndarray:
+    """Compute the 42-dim observation that matches env_bridge_node exactly.
+
+    Layout (must match env_bridge_node.cpp / build_observation()):
+        [0..35]  normalised lidar bins (already normalised by downsample_lidar)
+        [36]     dist_norm                       (∈ [0, 1])
+        [37]     cos(goal_angle_body)
+        [38]     sin(goal_angle_body)
+        [39]     goal_path_min — min lidar reading in a ±20° cone around the
+                 GOAL direction (NOT around 'forward'). Asks "is the path TO
+                 the goal blocked?"
+        [40]     prev linear  velocity (m/s, unnormalised)
+        [41]     prev angular velocity (rad/s, unnormalised)
+    """
     lidar = downsample_lidar(scan_ranges, lidar_bins, max_range)
 
     dx = goal_x - robot_x
@@ -77,19 +91,39 @@ def compute_obs(scan_ranges: np.ndarray, robot_x: float, robot_y: float,
     while goal_body >  math.pi: goal_body -= 2 * math.pi
     while goal_body < -math.pi: goal_body += 2 * math.pi
 
+    # ── goal_path_min — match env_bridge_node:build_observation() exactly ────
+    # Lidar bin layout: bin 0 covers 0°-(360°/lidar_bins), bin index increases
+    # counter-clockwise. So a goal body-angle θ ∈ [-π, π] maps to bin index
+    # round(θ_pos / 2π * n_bins) where θ_pos = θ mod 2π.
+    goal_body_pos = (goal_body + 2 * math.pi) % (2 * math.pi)
+    center_bin = int(goal_body_pos / (2 * math.pi) * lidar_bins) % lidar_bins
+    goal_half_window = 2   # ±2 bins (5 bins total) — match env_bridge
+    goal_path_min = 1.0
+    for b in range(-goal_half_window, goal_half_window + 1):
+        bin_idx = (center_bin + b + lidar_bins) % lidar_bins
+        goal_path_min = min(goal_path_min, float(lidar[bin_idx]))
+
+    # Note: prev_lin_vel / prev_ang_vel are intentionally OMITTED from the
+    # BC observation. Including them creates a feedback loop where the policy
+    # just echoes back the previous action (BC learns the cheap shortcut
+    # output ≈ prev_action). Without them, BC must use lidar + goal_path_min
+    # to choose actions, which generalises better.
+    _ = prev_lin_vel; _ = prev_ang_vel   # accepted but unused
     return np.concatenate([
         lidar.astype(np.float32),
-        np.array([dist_norm, math.cos(goal_body), math.sin(goal_body),
-                  prev_lin_vel], dtype=np.float32),
+        np.array([dist_norm,
+                  math.cos(goal_body), math.sin(goal_body),
+                  goal_path_min], dtype=np.float32),
     ])
 
 
 # ── bag reading ───────────────────────────────────────────────────────────────
 TOPIC_TYPES = {
-    "/scan":      "sensor_msgs/msg/LaserScan",
-    "/odom":      "nav_msgs/msg/Odometry",
-    "/goal_pose": "geometry_msgs/msg/PoseStamped",
-    "/cmd_vel":   "geometry_msgs/msg/Twist",
+    "/scan":             "sensor_msgs/msg/LaserScan",
+    "/odom":             "nav_msgs/msg/Odometry",       # used only for prev_lin_vel
+    "/robot_world_pose": "geometry_msgs/msg/PoseStamped",  # robot pose in map frame
+    "/goal_pose":        "geometry_msgs/msg/PoseStamped",
+    "/cmd_vel":          "geometry_msgs/msg/Twist",
 }
 
 
@@ -116,7 +150,13 @@ def build_dataset(bag_path: str, lidar_bins: int, max_range: float,
                   goal_tolerance: float) -> dict[str, np.ndarray]:
     # State trackers — populated as we walk the bag in time order.
     latest_scan = None
-    latest_odom = None     # (x, y, yaw, lin_vel)
+    latest_world = None    # (x, y, yaw) from /robot_world_pose
+    # prev_lin_vel / prev_ang_vel are the PREVIOUS /cmd_vel (matches what
+    # env_bridge_node stores as last_lv_/last_av_). We update them AFTER each
+    # /cmd_vel is paired into a transition, so the NEXT /cmd_vel's obs uses
+    # this one as its 'prev'.
+    prev_lin_vel = 0.0
+    prev_ang_vel = 0.0
     latest_goal = None     # (gx, gy)
     current_ep_id = -1
 
@@ -145,15 +185,18 @@ def build_dataset(bag_path: str, lidar_bins: int, max_range: float,
             latest_scan = np.asarray(msg.ranges, dtype=np.float32)
 
         elif topic == "/odom":
-            p = msg.pose.pose
+            # No longer used — kept here to avoid logging spam if it appears.
+            pass
+
+        elif topic == "/robot_world_pose":
+            p = msg.pose
             yaw = quat_yaw(p.orientation.z, p.orientation.w)
-            lin = float(msg.twist.twist.linear.x)
-            latest_odom = (float(p.position.x), float(p.position.y), yaw, lin)
+            latest_world = (float(p.position.x), float(p.position.y), yaw)
 
             # Track closest approach to goal for success detection
-            if latest_goal is not None and latest_odom is not None:
+            if latest_goal is not None and latest_world is not None:
                 gx, gy = latest_goal
-                d = math.hypot(latest_odom[0] - gx, latest_odom[1] - gy)
+                d = math.hypot(latest_world[0] - gx, latest_world[1] - gy)
                 if d < ep_min_dist:
                     ep_min_dist = d
 
@@ -163,17 +206,28 @@ def build_dataset(bag_path: str, lidar_bins: int, max_range: float,
             current_ep_id += 1
             latest_goal = (float(msg.pose.position.x),
                            float(msg.pose.position.y))
+            # Reset prev-action trackers — first transition of new episode
+            # should see prev_lv/prev_av = 0, matching env_bridge's behaviour
+            # at episode start.
+            prev_lin_vel = 0.0
+            prev_ang_vel = 0.0
 
         elif topic == "/cmd_vel":
-            if latest_scan is None or latest_odom is None or latest_goal is None:
+            if (latest_scan is None or latest_world is None
+                    or latest_goal is None):
                 continue
-            rx, ry, ryaw, prev_lin = latest_odom
+            rx, ry, ryaw = latest_world
             gx, gy = latest_goal
+            # Build obs using the PREVIOUS cmd_vel (matches env_bridge's last_lv_/last_av_).
             obs = compute_obs(latest_scan, rx, ry, ryaw, gx, gy,
-                              prev_lin, lidar_bins, max_range)
+                              prev_lin_vel, prev_ang_vel,
+                              lidar_bins, max_range)
             act = np.array([msg.linear.x, msg.angular.z], dtype=np.float32)
             ep_buf_obs.append(obs)
             ep_buf_act.append(act)
+            # Now THIS cmd_vel becomes the "prev" for the next transition.
+            prev_lin_vel = float(msg.linear.x)
+            prev_ang_vel = float(msg.angular.z)
 
     finalize_episode()
 

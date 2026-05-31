@@ -120,6 +120,9 @@ public:
     world_name_  = declare_parameter("world_name",     std::string("empty"));
     update_rate_ = declare_parameter("update_rate_hz", 20.0);
     z_height_    = declare_parameter("obs_z",          0.25);
+    // Slow-motion factor for the keyframe playback. time_scale=1.0 plays at
+    // the authored speed; >1 stretches the timeline so cylinders move slower.
+    time_scale_  = declare_parameter("time_scale",     1.0);
     // "keyframe" (default) → KEYS_1..KEYS_6 large-path animations
     // "stage3"             → small-amplitude oscillations for the 4 cylinders
     //                        at (±1, ±1)
@@ -201,7 +204,7 @@ private:
 
   void tick()
   {
-    double t = (this->now() - start_time_).seconds();
+    double t = (this->now() - start_time_).seconds() / std::max(time_scale_, 1e-3);
     geometry_msgs::msg::PoseArray msg;
     msg.header.stamp = this->now();
     msg.header.frame_id = "world";
@@ -245,6 +248,7 @@ private:
   std::string motion_mode_;
   double      update_rate_;
   double      z_height_;
+  double      time_scale_;
   std::vector<ObstacleSpec>   obstacles_;
   rclcpp::Time                start_time_;
   rclcpp::TimerBase::SharedPtr timer_;
