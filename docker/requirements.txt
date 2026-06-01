@@ -2,8 +2,12 @@
 torch==2.1.2+cu121
 torchvision==0.16.2+cu121
 stable-baselines3>=2.0.0
+# AIRL / GAIL / DAgger algorithms on top of SB3.
+# Pulls in sacred / huggingface-hub as transitive deps.
+imitation>=1.0.0
 opencv-python-headless<4.10.0
 gymnasium>=0.29.0
 numpy>=1.24.0,<2.0.0
 pyyaml>=6.0
 tensorboard>=2.13.0
+matplotlib>=3.7.0          # reward inspection plots

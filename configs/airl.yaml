@@ -1,0 +1,77 @@
+# Inverse RL via AIRL on stage 11 Nav2 demos.
+#
+# Stack:
+#   - SB3 PPO generates rollouts in the live sim.
+#   - imitation.algorithms.adversarial.airl.AIRL trains a discriminator.
+#   - BasicShapedRewardNet decomposes reward as
+#         r(s, a, s') = g(s, a) + γ·h(s') - h(s)
+#     so g(·) is the recovered "true" reward — inspectable post-hoc with
+#     airl/inspect_reward.py.
+
+# ── env (mirrors configs/bc.yaml for stage 11) ───────────────────────────────
+env:
+  lidar_bins: 36
+  max_lidar_range: 6.0      # stage 11 uses 6 m lidar; matches bridge.launch.py
+  collision_threshold: 0.13
+  tb3_model: "waffle_pi"
+  goal_tolerance: 0.40
+  max_episode_steps: 450
+  clearance_threshold: 0.8
+
+  # The TurtleBot3Env reads these to build the reward function used at
+  # collection time; AIRL ignores them but the env wrapper requires them.
+  goal_reward: 1.0
+  collision_penalty: -1.0
+  time_penalty: -0.005
+  distance_reward_scale: 1.0
+
+  min_linear_vel:   0.0     # no reverse
+  max_linear_vel:   0.22
+  max_angular_vel:  2.0
+
+  world_bounds: [-2.5, 2.5, -2.5, 2.5]    # stage 11 goal-sampling box
+  robot_min_goal_dist: 0.5
+
+  successive_goals: false
+  difficulty_radius_init: 1.0
+  difficulty_radius_min:  0.5
+  difficulty_radius_max:  4.0
+  difficulty_grow:        1.01
+  difficulty_shrink:      0.99
+
+ros2:
+  observation_service: "/get_observation"
+  step_service:        "/step"
+  reset_service:       "/reset_episode"
+  cmd_vel_topic:       "/cmd_vel"
+  scan_topic:          "/scan"
+  odom_topic:          "/odom"
+  goal_pose_topic:     "/goal_pose"
+  reward_topic:        "/reward"
+  episode_done_topic:  "/episode_done"
+  service_timeout_sec: 10.0
+  step_duration_sec:   0.1
+
+# ── AIRL discriminator ───────────────────────────────────────────────────────
+airl:
+  demo_batch_size: 2048
+  gen_replay_buffer_capacity: 2048
+  # 1 disc update per round (was 4). With a slow sim (10 Hz) and a single
+  # vec env, 4 disc updates per round let the discriminator dominate — the
+  # policy's reward curve descended monotonically because it never had
+  # enough on-policy data to fool the discriminator. 1 update per round
+  # gives PPO 4x more relative training time and lets the policy catch up.
+  n_disc_updates_per_round: 1
+
+# ── PPO generator ────────────────────────────────────────────────────────────
+# Lowered LR 10x vs SB3 default (3e-4). With BC warm-start the policy is
+# already good; aggressive PPO updates immediately destroyed BC quality
+# and left the discriminator learning against a degraded baseline. 3e-5
+# slows policy drift so BC survives long enough for the discriminator to
+# learn a *good* reward (Nav2 vs near-BC policy).
+ppo:
+  n_steps:       1024
+  batch_size:    64
+  learning_rate: 3.0e-5
+  gamma:         0.99
+  n_epochs:      10

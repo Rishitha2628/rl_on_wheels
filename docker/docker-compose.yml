@@ -33,6 +33,7 @@ services:
       - ../scripts:/scripts:ro            # launch_sim.sh lives here
       - ../rl:/rl:ro                       # so `docker exec` can run training
       - ../bc:/bc:ro                       # behavior cloning code
+      - ../airl:/airl:ro                   # inverse RL (AIRL) code
       - ../checkpoints:/checkpoints       # checkpoints written here
       - ../logs:/logs                      # tensorboard logs here
       - ../demos:/demos                    # ros2 bag files + dataset npz
