@@ -371,6 +371,12 @@ PYTHONPATH=/:$PYTHONPATH python3 /airl/inspect_reward.py \
    goal is in front of the robot. *This is the IRL contribution* —
    something BC simply cannot produce.
 
+   <p align="center">
+     <img src="airl/results/reward_vs_distance.png"   width="32%" alt="reward vs distance to goal"/>
+     <img src="airl/results/reward_vs_lidar.png"      width="32%" alt="reward vs lidar clearance"/>
+     <img src="airl/results/reward_vs_goal_angle.png" width="32%" alt="reward vs goal angle"/>
+   </p>
+
 2. **Adversarial AIRL is highly sensitive to PPO learning rate.** With
    the default SB3 PPO LR (3e-4), the BC warm-start gets destroyed by
    the first few PPO updates and the discriminator dominates from then
