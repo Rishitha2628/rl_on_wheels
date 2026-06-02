@@ -61,6 +61,32 @@ class Strip42to40(gym.ObservationWrapper):
         return obs[:40].astype(np.float32)
 
 
+class FrameStackFlat(gym.Wrapper):
+    """Stack last k obs, flat-concat. Mirrors train_airl.py's wrapper."""
+
+    def __init__(self, env: gym.Env, k: int) -> None:
+        super().__init__(env)
+        self.k = int(k)
+        low = np.tile(env.observation_space.low, self.k)
+        high = np.tile(env.observation_space.high, self.k)
+        self.observation_space = gym.spaces.Box(low, high, dtype=np.float32)
+        self._buf: list[np.ndarray] = []
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self._buf = [obs.astype(np.float32)] * self.k
+        return self._stack(), info
+
+    def step(self, action):
+        obs, r, terminated, truncated, info = self.env.step(action)
+        self._buf.pop(0)
+        self._buf.append(obs.astype(np.float32))
+        return self._stack(), r, terminated, truncated, info
+
+    def _stack(self) -> np.ndarray:
+        return np.concatenate(self._buf).astype(np.float32)
+
+
 class FrozenRewardWrapper(gym.Wrapper):
     """Replace env reward with reward_net(s, a, s').
 
@@ -140,6 +166,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--eval-every",     type=int, default=10_000,
                    help="run env eval every N env steps")
     p.add_argument("--eval-episodes",  type=int, default=10)
+    p.add_argument("--frame-stack",    type=int, default=1,
+                   help="must match the frame_stack used by train_airl.py "
+                        "when this reward + policy were trained")
     return p.parse_args()
 
 
@@ -155,6 +184,8 @@ def main() -> None:
         rclpy.init()
 
     base_env = Strip42to40(TurtleBot3Env(cfg))
+    if args.frame_stack > 1:
+        base_env = FrameStackFlat(base_env, k=args.frame_stack)
     reward_net = load_reward_net(args.reward_net,
                                  base_env.observation_space,
                                  base_env.action_space)

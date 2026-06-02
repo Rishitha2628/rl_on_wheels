@@ -41,11 +41,40 @@ class Strip42to40(gym.ObservationWrapper):
         return obs[:40].astype(np.float32)
 
 
+class FrameStackFlat(gym.Wrapper):
+    """Same wrapper as train_airl.py — required so the env obs dim matches
+    the trained PPO policy's input dim."""
+
+    def __init__(self, env: gym.Env, k: int) -> None:
+        super().__init__(env)
+        self.k = int(k)
+        low = np.tile(env.observation_space.low, self.k)
+        high = np.tile(env.observation_space.high, self.k)
+        self.observation_space = gym.spaces.Box(low, high, dtype=np.float32)
+        self._buf: list[np.ndarray] = []
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self._buf = [obs.astype(np.float32)] * self.k
+        return self._stack(), info
+
+    def step(self, action):
+        obs, r, terminated, truncated, info = self.env.step(action)
+        self._buf.pop(0)
+        self._buf.append(obs.astype(np.float32))
+        return self._stack(), r, terminated, truncated, info
+
+    def _stack(self) -> np.ndarray:
+        return np.concatenate(self._buf).astype(np.float32)
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config",   default="/configs/airl.yaml")
     p.add_argument("--policy",   required=True, help="path to PPO .zip checkpoint")
     p.add_argument("--episodes", type=int, default=50)
+    p.add_argument("--frame-stack", type=int, default=1,
+                   help="must match the frame_stack used during training")
     return p.parse_args()
 
 
@@ -57,6 +86,8 @@ def main() -> None:
     if not rclpy.ok():
         rclpy.init()
     env = Strip42to40(TurtleBot3Env(cfg))
+    if args.frame_stack > 1:
+        env = FrameStackFlat(env, k=args.frame_stack)
 
     model = PPO.load(args.policy)
     print(f"loaded policy: {args.policy}")

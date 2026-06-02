@@ -71,10 +71,46 @@ class Strip42to40(gym.ObservationWrapper):
         return obs[:40].astype(np.float32)
 
 
-def make_env(cfg: dict) -> gym.Env:
+class FrameStackFlat(gym.Wrapper):
+    """Stack the last `k` observations and flatten to a single 1D vector.
+
+    Output[t] = concat(obs[t-(k-1)], ..., obs[t-1], obs[t])  (k * D dims).
+    First k-1 steps of each episode repeat the first obs to keep shape
+    fixed. Mirrors the stacking that convert_demos.py applies offline, so
+    env obs and demo obs match exactly.
+    """
+
+    def __init__(self, env: gym.Env, k: int) -> None:
+        super().__init__(env)
+        self.k = int(k)
+        D = env.observation_space.shape[0]
+        low = np.tile(env.observation_space.low, self.k)
+        high = np.tile(env.observation_space.high, self.k)
+        self.observation_space = gym.spaces.Box(low, high, dtype=np.float32)
+        self._buf: list[np.ndarray] = []
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self._buf = [obs.astype(np.float32)] * self.k
+        return self._stack(), info
+
+    def step(self, action):
+        obs, r, terminated, truncated, info = self.env.step(action)
+        self._buf.pop(0)
+        self._buf.append(obs.astype(np.float32))
+        return self._stack(), r, terminated, truncated, info
+
+    def _stack(self) -> np.ndarray:
+        return np.concatenate(self._buf).astype(np.float32)
+
+
+def make_env(cfg: dict, frame_stack: int = 1) -> gym.Env:
     if not rclpy.ok():
         rclpy.init()
-    return Strip42to40(TurtleBot3Env(cfg))
+    env = Strip42to40(TurtleBot3Env(cfg))
+    if frame_stack > 1:
+        env = FrameStackFlat(env, k=frame_stack)
+    return env
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,6 +126,10 @@ def parse_args() -> argparse.Namespace:
                    help="run env eval every N AIRL rounds (set 0 to disable)")
     p.add_argument("--eval-episodes",   type=int, default=10,
                    help="how many env episodes per eval checkpoint")
+    p.add_argument("--frame-stack",     type=int, default=1,
+                   help="stack last k env observations (must match the demo "
+                        "pickle's stacking; use the same value you passed "
+                        "to convert_demos.py --frame-stack)")
     return p.parse_args()
 
 
@@ -137,8 +177,9 @@ def main() -> None:
 
     # ── env ─────────────────────────────────────────────────────────────────
     # Single sim → DummyVecEnv with one env. PPO on-policy will roll out
-    # n_steps per update inside this vec env.
-    venv = DummyVecEnv([lambda: make_env(cfg)])
+    # n_steps per update inside this vec env. frame_stack must match the
+    # demo pickle that was passed in.
+    venv = DummyVecEnv([lambda: make_env(cfg, frame_stack=args.frame_stack)])
 
     # ── reward net (AIRL decomposition) ─────────────────────────────────────
     reward_net = BasicShapedRewardNet(

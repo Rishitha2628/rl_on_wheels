@@ -1,18 +1,41 @@
 # rl_on_wheels
 
 Goal-conditioned mobile robot navigation on TurtleBot3 Waffle Pi
-in ROS2 Humble + Ignition Fortress (Gazebo Sim).
-
-Two pipelines are wired up:
-
-- **Behavior Cloning + DAgger** (current focus) — imitate a Nav2 expert from
-  ros2 bag demos, then close the covariate-shift gap with iterative DAgger
-  relabeling. Hits **84 %** success on the 5×5 maze + dynamics arena
-  (stage 4) and **62 %** on a larger 7×7 maze (stage 11).
-- **Model-free RL** — SAC (legacy), TD3, PPO. Same env, same sensor stack.
-
-Sensor input is 2D LiDAR only (360 rays → 36 normalised bins, optionally
+in ROS2 Humble + Ignition Fortress (Gazebo Sim). Same env, same 2D LiDAR
+input across all approaches (360 rays → 36 normalised bins, optionally
 frame-stacked). No cameras.
+
+Three approaches are implemented end-to-end and compared:
+
+- **Behavior Cloning + DAgger** — imitate a Nav2 expert from ros2 bag
+  demos, then close the covariate-shift gap with iterative DAgger
+  relabeling. **84 %** success on stage 4, **62 %** on stage 11.
+- **Inverse RL (AIRL)** — recover an interpretable reward function from
+  the same Nav2 demos, then optimise a fresh PPO against the frozen
+  recovered reward. Reaches **50 %** on stage 11 — matches BC but does
+  not exceed it. Documents the structural ceiling of pure imitation-
+  based IRL on a single-sim 10 Hz training budget.
+- **Model-free RL** — TD3 baseline (canonical). SAC + HER was implemented
+  as the initial baseline (`rl/agents/sac_her_agent.py`,
+  `configs/sac_her.yaml`) before switching to TD3 mid-project for
+  simpler off-policy training without HER's goal-relabeling overhead.
+  Curriculum experiments use TD3 only — SAC was not rerun on the new
+  stages.
+
+### Headline result (stage 11, 50-episode deterministic eval)
+
+| Method | Success | Notes |
+| ------ | ------- | ----- |
+| Nav2 expert (demo source) | 89 % | upper bound from the demonstrator itself |
+| **BC + frame-stack + safety overrides** | **62 %** | strongest learned policy |
+| BC alone (matched eval, no overrides) | 52 % | imitation baseline |
+| Phase-2 PPO + frozen AIRL reward | 50 % | matches BC; doesn't exceed |
+| Adversarial AIRL | 46 % | adversarial loop matches BC within noise |
+
+The honest story: **on this slow single-sim training budget, BC is the
+strongest tool for raw policy quality, while AIRL contributes an
+interpretable reward function but no policy improvement.** See the
+[Inverse RL](#inverse-rl-airl) section for the full discussion.
 
 ---
 
@@ -47,6 +70,12 @@ rl_on_wheels/
 │   ├── dataset_merge.py             concat base demos + DAgger NPZs
 │   ├── dagger_iterate.sh            collect → merge → train loop
 │   └── inspect_dataset.py           sanity-check action distributions
+├── airl/                            Inverse RL via AIRL (HumanCompatibleAI imitation lib)
+│   ├── convert_demos.py             BC NPZ → imitation Trajectory pickle
+│   ├── train_airl.py                BC pretraining + AIRL adversarial loop
+│   ├── train_with_reward.py         phase 2: PPO against frozen recovered reward
+│   ├── eval_policy.py               50-ep eval for SB3 PPO checkpoints
+│   └── inspect_reward.py            probe recovered reward over obs sweeps
 ├── rl/                              Model-free RL pipelines (TD3 / SAC / PPO)
 │   ├── envs/ros2_gym_env.py         gymnasium Env wrapper
 │   ├── agents/{sac_her,td3,ppo}_agent.py
@@ -154,9 +183,10 @@ python3 /rl/eval.py --config /configs/td3.yaml \
 
 | Method | Config | Train script | TensorBoard port |
 |--------|--------|--------------|-------|
-| BC + DAgger | `configs/bc.yaml` | `bc/train.py` | 6006 |
-| SAC (legacy) | `configs/sac_her.yaml` | `rl/train.py` | 6006 |
+| BC + DAgger | `configs/bc.yaml` | `bc/train.py`, `bc/dagger_iterate.sh` | 6006 |
+| AIRL (inverse RL) | `configs/airl.yaml` | `airl/train_airl.py` + `airl/train_with_reward.py` | 6006 |
 | TD3 | `configs/td3.yaml` | `rl/train_td3.py` | 6007 |
+| SAC (early prototype) | `configs/sac_her.yaml` | `rl/train.py` | 6006 |
 | PPO | `configs/ppo.yaml` | `rl/train_ppo.py` | — |
 
 ---
@@ -261,6 +291,119 @@ trajectories explored states too far off the demo manifold for Nav2's
 relabels to recover from. The 6 m lidar lets BC see further → fewer
 off-manifold visits during DAgger collection → cleaner labels in
 future iterations.
+
+---
+
+## Inverse RL (AIRL)
+
+The IRL pipeline asks a different question than BC: instead of "what
+action would the expert take?", it asks "**what reward function would
+make the expert's behavior look optimal?**". The output is an
+interpretable reward function that BC cannot produce. Built on top of
+the [HumanCompatibleAI `imitation`](https://github.com/HumanCompatibleAI/imitation)
+library + SB3 PPO.
+
+### Pipeline
+
+```
+1. Demo conversion        BC NPZ (40-dim obs + actions + ep_id) →
+                          imitation.Trajectory pickle.
+2. BC pretraining         Warm-start PPO's policy on demos for 20
+                          epochs (imitation.algorithms.bc.BC). Without
+                          this, PPO starts random and the discriminator
+                          immediately wins, reward curve descends
+                          monotonically.
+3. AIRL adversarial loop  Train discriminator vs PPO. Discriminator
+                          score → reward signal for PPO. Repeat.
+                          BasicShapedRewardNet with running input norm.
+4. (phase 2)              Freeze recovered reward. Train fresh PPO from
+                          BC warm-start against just that reward, no
+                          more adversarial drift.
+5. Inspect reward         Sweep recovered reward over interpretable obs
+                          axes (dist-to-goal, lidar clearance, goal
+                          angle) → PNG plots.
+```
+
+### Quickstart (after BC NPZ exists)
+
+```bash
+# 1. convert demos
+PYTHONPATH=/:$PYTHONPATH python3 /airl/convert_demos.py \
+    --npz /demos/stage11_bc_6m.npz \
+    --out /demos/stage11_trajectories.pkl
+
+# 2. AIRL (BC pretrain + adversarial)
+PYTHONPATH=/:$PYTHONPATH python3 /airl/train_airl.py \
+    --config /configs/airl.yaml \
+    --trajectories /demos/stage11_trajectories.pkl \
+    --total-timesteps 60000 --bc-epochs 20 \
+    --out-dir /checkpoints/airl_stage11
+
+# 3. phase 2: PPO against frozen recovered reward
+PYTHONPATH=/:$PYTHONPATH python3 /airl/train_with_reward.py \
+    --reward-net /checkpoints/airl_stage11/reward_net.pt \
+    --init-policy /checkpoints/airl_stage11/policy_after_bc.zip \
+    --total-timesteps 200000 \
+    --out-dir /checkpoints/airl_phase2_stage11
+
+# 4. inspect the recovered reward
+PYTHONPATH=/:$PYTHONPATH python3 /airl/inspect_reward.py \
+    --checkpoint-dir /checkpoints/airl_stage11 \
+    --out-dir /logs/airl_reward_inspect
+```
+
+### Results (50-episode eval, stage 11)
+
+| Variant | Success | Mean reward | Mean len |
+| ------- | ------- | ----------- | -------- |
+| Adversarial AIRL (default LR=3e-4) | 16 % | −1608 | 188 |
+| Adversarial AIRL (low LR=3e-5, BC warm-start) | 46 % | −196 | 121 |
+| **Phase 2 — PPO + frozen recovered reward** | **50 %** | **+17** | **111** |
+| BC alone (matched eval conditions) | 52 % | +66 | 115 |
+
+### What we found
+
+1. **The recovered reward function is interpretable.** Sweep plots over
+   dist-to-goal, lidar clearance, and goal-angle show structures
+   consistent with what Nav2 implicitly optimises — reward increases
+   monotonically as distance-to-goal decreases, drops sharply when min
+   lidar clearance approaches the collision threshold, peaks when the
+   goal is in front of the robot. *This is the IRL contribution* —
+   something BC simply cannot produce.
+
+2. **Adversarial AIRL is highly sensitive to PPO learning rate.** With
+   the default SB3 PPO LR (3e-4), the BC warm-start gets destroyed by
+   the first few PPO updates and the discriminator dominates from then
+   on — reward curve descends monotonically, final policy hits 16 %.
+   Dropping LR 10× to 3e-5 preserves BC quality long enough for the
+   discriminator to learn against a *good* policy; final 46 %.
+
+3. **Phase 2 (frozen reward + fresh PPO) matches but doesn't exceed
+   BC.** 50 % vs BC's 52 % — within the binomial confidence interval on
+   50 episodes. This is the structural ceiling of pure imitation-based
+   IRL: the reward function rewards "looks like Nav2," so optimal
+   policies under it look like Nav2, capping at expert quality.
+
+4. **Frame stacking helps BC but hurts AIRL on this setup.** Adding 4×
+   frame-stacking pushed BC from 52 % → 62 %; the same change applied
+   to the AIRL pipeline collapsed it back to 16 % (adversarial) and
+   10 % (phase 2). The 4× larger input means the discriminator and
+   policy nets have more capacity than the demo set + training budget
+   can fit cleanly. Documented in commit history; the current AIRL
+   pipeline supports frame stacking via `--frame-stack k` but defaults
+   to 1.
+
+### Honest framing
+
+The IRL angle of the project produced a **working pipeline** and an
+**interpretable artifact** (the reward function) but **not a policy
+that exceeds the BC baseline** on this compute budget. Pure imitation-
+based methods cannot exceed the expert without hybridising with a true
+task reward signal (which would no longer be "pure IRL"). Three places
+the result could be pushed further if compute were available:
+parallel vec-envs to reach the millions-of-steps regime AIRL papers
+use, off-policy AIRL variants like DAC (SAC instead of PPO), or
+hybrid AIRL + env-reward training.
 
 ---
 
