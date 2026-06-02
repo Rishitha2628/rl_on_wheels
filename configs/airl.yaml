@@ -1,4 +1,4 @@
-# Inverse RL via AIRL on stage 11 Nav2 demos.
+# Inverse RL via AIRL on stage 5 Nav2 demos.
 #
 # Stack:
 #   - SB3 PPO generates rollouts in the live sim.
@@ -8,10 +8,10 @@
 #     so g(·) is the recovered "true" reward — inspectable post-hoc with
 #     airl/inspect_reward.py.
 
-# ── env (mirrors configs/bc.yaml for stage 11) ───────────────────────────────
+# ── env (mirrors configs/bc.yaml for stage 5) ───────────────────────────────
 env:
   lidar_bins: 36
-  max_lidar_range: 6.0      # stage 11 uses 6 m lidar; matches bridge.launch.py
+  max_lidar_range: 6.0      # stage 5 uses 6 m lidar; matches bridge.launch.py
   collision_threshold: 0.13
   tb3_model: "waffle_pi"
   goal_tolerance: 0.40
@@ -29,7 +29,7 @@ env:
   max_linear_vel:   0.22
   max_angular_vel:  2.0
 
-  world_bounds: [-2.5, 2.5, -2.5, 2.5]    # stage 11 goal-sampling box
+  world_bounds: [-2.5, 2.5, -2.5, 2.5]    # stage 5 goal-sampling box
   robot_min_goal_dist: 0.5
 
   successive_goals: false

@@ -99,11 +99,11 @@ def main() -> None:
 
             # Safety / final-approach overrides operate on normalized lidar
             # values, so thresholds scale inversely with max_lidar_range
-            # (3.5 m for stage 4, 6.0 m for stage 11).
+            # (3.5 m for stage 4, 6.0 m for stage 5).
             max_range = float(cfg["env"].get("max_lidar_range", 3.5))
             front_threshold = 0.45 / max_range
             # Side threshold is tighter (0.25 m) than the head-on threshold
-            # (0.45 m). Stage 11's interior corridors regularly put a wall
+            # (0.45 m). Stage 5's interior corridors regularly put a wall
             # within 0.45 m on one side as the robot threads between walls,
             # which made the previous 0.45 m side guard fire constantly and
             # the robot looked like it stopped mid-path. 0.25 m only fires

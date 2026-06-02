@@ -2,7 +2,7 @@
 """Generate Nav2 occupancy grids (PGM + YAML) for each TurtleBot3 stage.
 
 Maps include STATIC obstacles only — outer walls (all stages), inner walls
-(stages 4, 5, 7-11), and static cylinders (stage 2). Moving obstacles are
+(stages 4 and 5), and static cylinders (stage 2). Moving obstacles are
 handled by Nav2's local costmap at runtime via the live LiDAR.
 
 Output: ros2_ws/src/tb3_nav2/maps/tb3_stage{N}.{pgm,yaml}
@@ -47,7 +47,7 @@ OUTER_WALLS_5x5 = [
     WallRect( 0.0,  -2.425,  5.0, 0.15,  math.pi),
 ]
 
-# Outer walls for the 7x7 stage 11 arena, walls at ±3.425.
+# Outer walls for the 7x7 stage 5 arena, walls at ±3.425.
 OUTER_WALLS_7x7 = [
     WallRect(-3.425, 0.0,    7.0, 0.15,  math.pi / 2),
     WallRect( 3.425, 0.0,    7.0, 0.15, -math.pi / 2),
@@ -66,9 +66,9 @@ INNER_WALLS = [
     WallRect(-1.2,   0.092,  1.0, 0.15, -math.pi / 2),
 ]
 
-# Stage 11 — 8 interior walls forming a maze inside the 7x7 arena.
-# Matches tb3_stage11.sdf.
-INNER_WALLS_STAGE11 = [
+# Stage 5 — 8 interior walls forming a maze inside the 7x7 arena.
+# Matches tb3_stage5.sdf.
+INNER_WALLS_STAGE5 = [
     WallRect(-1.5,   2.0,   1.0, 0.15,  0.0),
     WallRect( 1.5,   2.0,   1.0, 0.15,  0.0),
     WallRect(-2.0,   0.5,   1.0, 0.15,  math.pi / 2),
@@ -83,21 +83,19 @@ STATIC_CYLINDERS = [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)]
 CYLINDER_RADIUS = 0.15
 
 # Per-stage flags
-HAS_INNER = {1: False, 2: False, 3: False, 4: True, 5: True,
-             6: False, 7: True, 8: True, 9: True, 10: True, 11: True}
-HAS_STATIC_CYL = {1: False, 2: True, 3: False, 4: False, 5: False,
-                  6: False, 7: False, 8: False, 9: False, 10: False, 11: False}
+HAS_INNER      = {1: False, 2: False, 3: False, 4: True,  5: True}
+HAS_STATIC_CYL = {1: False, 2: True,  3: False, 4: False, 5: False}
 
 # Per-stage half-extent of the rasterized map (= arena-side/2 + 1 m margin).
-# Defaults to 2.8 m for the 5x5 arenas; stage 11 uses 3.8 m for its 7x7 arena.
+# Defaults to 2.8 m for the 5x5 arenas; stage 5 uses 3.8 m for its 7x7 arena.
 HALF_EXTENT_DEFAULT = 2.8
-HALF_EXTENT_BY_STAGE = {11: 3.8}
+HALF_EXTENT_BY_STAGE = {5: 3.8}
 
 # Per-stage outer-wall set.
-OUTER_WALLS_BY_STAGE = {11: OUTER_WALLS_7x7}
+OUTER_WALLS_BY_STAGE = {5: OUTER_WALLS_7x7}
 
 # Per-stage inner-wall overrides. Default is INNER_WALLS.
-INNER_WALLS_BY_STAGE = {11: INNER_WALLS_STAGE11}
+INNER_WALLS_BY_STAGE = {5: INNER_WALLS_STAGE5}
 
 
 # ── rasterization ─────────────────────────────────────────────────────────────
@@ -186,7 +184,7 @@ def write_yaml(path: Path, pgm_name: str, half_ext: float) -> None:
 
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for stage in range(1, 12):
+    for stage in range(1, 6):
         grid, half_ext = build_stage_map(stage)
         pgm_name = f"tb3_stage{stage}.pgm"
         write_pgm(OUT_DIR / pgm_name, grid)

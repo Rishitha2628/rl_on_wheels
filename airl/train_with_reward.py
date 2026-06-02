@@ -12,19 +12,19 @@ stable convergence → policy can actually exceed BC if the recovered
 reward is good.
 
 Inputs:
-  - /checkpoints/airl_stage11_v2/reward_net.pt        frozen reward
-  - /checkpoints/airl_stage11_v2/policy_after_bc.zip  BC warm-start
+  - /checkpoints/airl_stage5_v2/reward_net.pt        frozen reward
+  - /checkpoints/airl_stage5_v2/policy_after_bc.zip  BC warm-start
 
 Pre-requirements (in another terminal):
-    ros2 launch tb3_rl_bridge bridge.launch.py stage:=11 dynamic_obstacles:=true
+    ros2 launch tb3_rl_bridge bridge.launch.py stage:=5 dynamic_obstacles:=true
 
 Usage:
     python3 /airl/train_with_reward.py \\
-        --reward-net /checkpoints/airl_stage11_v2/reward_net.pt \\
-        --init-policy /checkpoints/airl_stage11_v2/policy_after_bc.zip \\
+        --reward-net /checkpoints/airl_stage5_v2/reward_net.pt \\
+        --init-policy /checkpoints/airl_stage5_v2/policy_after_bc.zip \\
         --config /configs/airl.yaml \\
         --total-timesteps 200000 \\
-        --out-dir /checkpoints/airl_phase2_stage11
+        --out-dir /checkpoints/airl_phase2_stage5
 """
 
 from __future__ import annotations
@@ -161,7 +161,7 @@ def parse_args() -> argparse.Namespace:
                    help="BC warm-start PPO checkpoint (policy_after_bc.zip)")
     p.add_argument("--config",         default="/configs/airl.yaml")
     p.add_argument("--total-timesteps", type=int, default=200_000)
-    p.add_argument("--out-dir",        default="/checkpoints/airl_phase2_stage11")
+    p.add_argument("--out-dir",        default="/checkpoints/airl_phase2_stage5")
     p.add_argument("--seed",           type=int, default=0)
     p.add_argument("--eval-every",     type=int, default=10_000,
                    help="run env eval every N env steps")

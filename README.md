@@ -9,10 +9,10 @@ Three approaches are implemented end-to-end and compared:
 
 - **Behavior Cloning + DAgger** — imitate a Nav2 expert from ros2 bag
   demos, then close the covariate-shift gap with iterative DAgger
-  relabeling. **84 %** success on stage 4, **62 %** on stage 11.
+  relabeling. **84 %** success on stage 4, **62 %** on stage 5.
 - **Inverse RL (AIRL)** — recover an interpretable reward function from
   the same Nav2 demos, then optimise a fresh PPO against the frozen
-  recovered reward. Reaches **50 %** on stage 11 — matches BC but does
+  recovered reward. Reaches **50 %** on stage 5 — matches BC but does
   not exceed it. Documents the structural ceiling of pure imitation-
   based IRL on a single-sim 10 Hz training budget.
 - **Model-free RL** — TD3 baseline (canonical). SAC + HER was implemented
@@ -22,7 +22,7 @@ Three approaches are implemented end-to-end and compared:
   Curriculum experiments use TD3 only — SAC was not rerun on the new
   stages.
 
-### Headline result (stage 11, 50-episode deterministic eval)
+### Headline result (stage 5, 50-episode deterministic eval)
 
 | Method | Success | Notes |
 | ------ | ------- | ----- |
@@ -54,14 +54,14 @@ rl_on_wheels/
 │   │   ├── env_bridge_node.cpp      obs assembly, reward, done detection
 │   │   ├── reset_node.cpp           teleport + per-stage goal sampling
 │   │   └── dynamic_obstacle_node.cpp keyframe-driven moving cylinders
-│   ├── worlds/tb3_stage{1..11}.sdf  per-stage Ignition world files
+│   ├── worlds/tb3_stage{1..5}.sdf   per-stage Ignition world files
 │   └── launch/bridge.launch.py      starts sim + bridge nodes
 ├── ros2_ws/src/tb3_nav2/            Nav2 stack for BC demo collection
 │   ├── src/
 │   │   ├── pose_publisher_node.cpp  map→odom TF from Ignition ground-truth
 │   │   └── goal_forwarder_node.cpp  /goal_pose → /navigate_to_pose action
 │   ├── config/nav2_params.yaml      planner + controller tuning
-│   ├── maps/tb3_stage{1..11}.{pgm,yaml}  rasterised occupancy grids
+│   ├── maps/tb3_stage{1..5}.{pgm,yaml}   rasterised occupancy grids
 │   ├── tools/gen_maps.py            generates the PGMs from wall specs
 │   └── launch/nav2_bringup.launch.py  Nav2 lifecycle bringup
 ├── bc/                              Behavior cloning + DAgger
@@ -275,7 +275,7 @@ honest collision-avoidance (no wall-grazes that the env's coarse
 collision check otherwise accepts as successes). Mean episode length
 drops 17 %, so the successes are also faster.
 
-#### Stage 11 — 7×7 m maze + 6 dynamic cylinders (generalization probe)
+#### Stage 5 — 7×7 m maze + 6 dynamic cylinders (generalization probe)
 
 A bigger, denser maze. The 5×5 lidar/arena ratio that worked on stage 4
 gets too sparse at 7×7, so the lidar hardware max is bumped to 6.0 m
@@ -288,8 +288,8 @@ for this stage. Eval-time safety thresholds auto-scale with
 | 3.5 m lidar, after DAgger iter 1              |  ~10 %  |             |          |
 | **6 m lidar + scaled safety + final-approach P-controller** | **62 %** | **+154** | **200** |
 
-Stage 11 is intentionally harder than stage 4 — bigger arena, 3× the
-dynamic obstacles, longer corridors. DAgger iteration 1 on stage 11
+Stage 5 is intentionally harder than stage 4 — bigger arena, 3× the
+dynamic obstacles, longer corridors. DAgger iteration 1 on stage 5
 *hurt* the policy at the 3.5 m lidar config because BC's failure
 trajectories explored states too far off the demo manifold for Nav2's
 relabels to recover from. The 6 m lidar lets BC see further → fewer
@@ -333,30 +333,30 @@ library + SB3 PPO.
 ```bash
 # 1. convert demos
 PYTHONPATH=/:$PYTHONPATH python3 /airl/convert_demos.py \
-    --npz /demos/stage11_bc_6m.npz \
-    --out /demos/stage11_trajectories.pkl
+    --npz /demos/stage5_bc_6m.npz \
+    --out /demos/stage5_trajectories.pkl
 
 # 2. AIRL (BC pretrain + adversarial)
 PYTHONPATH=/:$PYTHONPATH python3 /airl/train_airl.py \
     --config /configs/airl.yaml \
-    --trajectories /demos/stage11_trajectories.pkl \
+    --trajectories /demos/stage5_trajectories.pkl \
     --total-timesteps 60000 --bc-epochs 20 \
-    --out-dir /checkpoints/airl_stage11
+    --out-dir /checkpoints/airl_stage5
 
 # 3. phase 2: PPO against frozen recovered reward
 PYTHONPATH=/:$PYTHONPATH python3 /airl/train_with_reward.py \
-    --reward-net /checkpoints/airl_stage11/reward_net.pt \
-    --init-policy /checkpoints/airl_stage11/policy_after_bc.zip \
+    --reward-net /checkpoints/airl_stage5/reward_net.pt \
+    --init-policy /checkpoints/airl_stage5/policy_after_bc.zip \
     --total-timesteps 200000 \
-    --out-dir /checkpoints/airl_phase2_stage11
+    --out-dir /checkpoints/airl_phase2_stage5
 
 # 4. inspect the recovered reward
 PYTHONPATH=/:$PYTHONPATH python3 /airl/inspect_reward.py \
-    --checkpoint-dir /checkpoints/airl_stage11 \
+    --checkpoint-dir /checkpoints/airl_stage5 \
     --out-dir /logs/airl_reward_inspect
 ```
 
-### Results (50-episode eval, stage 11)
+### Results (50-episode eval, stage 5)
 
 | Variant | Success | Mean reward | Mean len |
 | ------- | ------- | ----------- | -------- |

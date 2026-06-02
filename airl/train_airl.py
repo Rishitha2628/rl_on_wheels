@@ -15,15 +15,15 @@ Pipeline:
     obs and the env obs match.
 
 Pre-requirements (started separately):
-    1. ros2 launch tb3_rl_bridge bridge.launch.py stage:=11 \\
+    1. ros2 launch tb3_rl_bridge bridge.launch.py stage:=5 \\
            dynamic_obstacles:=true
 
 Usage (inside container):
     python3 /airl/train_airl.py \\
         --config /configs/airl.yaml \\
-        --trajectories /demos/stage11_trajectories.pkl \\
+        --trajectories /demos/stage5_trajectories.pkl \\
         --total-timesteps 500000 \\
-        --out-dir /checkpoints/airl_stage11
+        --out-dir /checkpoints/airl_stage5
 """
 
 from __future__ import annotations
@@ -118,7 +118,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config",          default="/configs/airl.yaml")
     p.add_argument("--trajectories",    required=True)
     p.add_argument("--total-timesteps", type=int, default=500_000)
-    p.add_argument("--out-dir",         default="/checkpoints/airl_stage11")
+    p.add_argument("--out-dir",         default="/checkpoints/airl_stage5")
     p.add_argument("--seed",            type=int, default=0)
     p.add_argument("--bc-epochs",       type=int, default=20,
                    help="BC pretraining epochs before AIRL. 0 = skip BC warm-start.")

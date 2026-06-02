@@ -2,13 +2,13 @@
 """Evaluate an AIRL/SB3-PPO policy in the live sim (deterministic rollout).
 
 Two checkpoints worth comparing:
-  - /checkpoints/airl_stage11/policy_after_bc.zip  → BC-only baseline
-  - /checkpoints/airl_stage11/policy.zip           → AIRL-refined
+  - /checkpoints/airl_stage5/policy_after_bc.zip  → BC-only baseline
+  - /checkpoints/airl_stage5/policy.zip           → AIRL-refined
 
 Usage:
     python3 /airl/eval_policy.py \\
         --config /configs/airl.yaml \\
-        --policy /checkpoints/airl_stage11/policy.zip \\
+        --policy /checkpoints/airl_stage5/policy.zip \\
         --episodes 50
 """
 

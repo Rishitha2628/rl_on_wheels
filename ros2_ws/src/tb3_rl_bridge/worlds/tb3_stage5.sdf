@@ -77,59 +77,59 @@
       </link>
     </model>
 
-    <!-- ── outer walls (5x5 arena, walls at ±2.425) ── -->
+    <!-- ── outer walls (7x7 arena, walls at ±3.425) ── -->
     <model name="outer_wall_1">
       <static>true</static>
-      <pose>-2.425 0 0 0 0 1.5708</pose>
+      <pose>-3.425 0 0 0 0 1.5708</pose>
       <link name="link">
         <collision name="col"><pose>0 0 0.25 0 0 0</pose>
-          <geometry><box><size>5 0.15 0.5</size></box></geometry></collision>
+          <geometry><box><size>7 0.15 0.5</size></box></geometry></collision>
         <visual name="vis"><pose>0 0 0.25 0 0 0</pose>
-          <geometry><box><size>5 0.15 0.5</size></box></geometry>
+          <geometry><box><size>7 0.15 0.5</size></box></geometry>
           <material><ambient>0.6 0.4 0.2 1</ambient><diffuse>0.6 0.4 0.2 1</diffuse></material>
         </visual>
       </link>
     </model>
     <model name="outer_wall_2">
       <static>true</static>
-      <pose>0 2.425 0 0 0 0</pose>
+      <pose>0 3.425 0 0 0 0</pose>
       <link name="link">
         <collision name="col"><pose>0 0 0.25 0 0 0</pose>
-          <geometry><box><size>5 0.15 0.5</size></box></geometry></collision>
+          <geometry><box><size>7 0.15 0.5</size></box></geometry></collision>
         <visual name="vis"><pose>0 0 0.25 0 0 0</pose>
-          <geometry><box><size>5 0.15 0.5</size></box></geometry>
+          <geometry><box><size>7 0.15 0.5</size></box></geometry>
           <material><ambient>0.6 0.4 0.2 1</ambient><diffuse>0.6 0.4 0.2 1</diffuse></material>
         </visual>
       </link>
     </model>
     <model name="outer_wall_3">
       <static>true</static>
-      <pose>2.425 0 0 0 0 -1.5708</pose>
+      <pose>3.425 0 0 0 0 -1.5708</pose>
       <link name="link">
         <collision name="col"><pose>0 0 0.25 0 0 0</pose>
-          <geometry><box><size>5 0.15 0.5</size></box></geometry></collision>
+          <geometry><box><size>7 0.15 0.5</size></box></geometry></collision>
         <visual name="vis"><pose>0 0 0.25 0 0 0</pose>
-          <geometry><box><size>5 0.15 0.5</size></box></geometry>
+          <geometry><box><size>7 0.15 0.5</size></box></geometry>
           <material><ambient>0.6 0.4 0.2 1</ambient><diffuse>0.6 0.4 0.2 1</diffuse></material>
         </visual>
       </link>
     </model>
     <model name="outer_wall_4">
       <static>true</static>
-      <pose>0 -2.425 0 0 0 3.14159</pose>
+      <pose>0 -3.425 0 0 0 3.14159</pose>
       <link name="link">
         <collision name="col"><pose>0 0 0.25 0 0 0</pose>
-          <geometry><box><size>5 0.15 0.5</size></box></geometry></collision>
+          <geometry><box><size>7 0.15 0.5</size></box></geometry></collision>
         <visual name="vis"><pose>0 0 0.25 0 0 0</pose>
-          <geometry><box><size>5 0.15 0.5</size></box></geometry>
+          <geometry><box><size>7 0.15 0.5</size></box></geometry>
           <material><ambient>0.6 0.4 0.2 1</ambient><diffuse>0.6 0.4 0.2 1</diffuse></material>
         </visual>
       </link>
     </model>
-    <!-- ── inner walls (7 segments, 1m × 0.15m × 0.5m) ── -->
+    <!-- ── inner walls (8 segments, 1m × 0.15m × 0.5m, spread across arena) ── -->
     <model name="inner_wall_1">
       <static>true</static>
-      <pose>-2.0 -1.5 0 0 0 0.0</pose>
+      <pose>-1.5 2.0 0 0 0 0.0</pose>
       <link name="link">
         <collision name="col"><pose>0 0 0.25 0 0 0</pose>
           <geometry><box><size>1 0.15 0.5</size></box></geometry></collision>
@@ -141,7 +141,7 @@
     </model>
     <model name="inner_wall_2">
       <static>true</static>
-      <pose>-0.5 -2.0 0 0 0 -1.5708</pose>
+      <pose>1.5 2.0 0 0 0 0.0</pose>
       <link name="link">
         <collision name="col"><pose>0 0 0.25 0 0 0</pose>
           <geometry><box><size>1 0.15 0.5</size></box></geometry></collision>
@@ -153,7 +153,7 @@
     </model>
     <model name="inner_wall_3">
       <static>true</static>
-      <pose>1.0 -1.0 0 0 0 1.5708</pose>
+      <pose>-2.0 0.5 0 0 0 1.5708</pose>
       <link name="link">
         <collision name="col"><pose>0 0 0.25 0 0 0</pose>
           <geometry><box><size>1 0.15 0.5</size></box></geometry></collision>
@@ -165,7 +165,7 @@
     </model>
     <model name="inner_wall_4">
       <static>true</static>
-      <pose>1.2 1.9 0 0 0 -1.5708</pose>
+      <pose>0.5 0.5 0 0 0 1.5708</pose>
       <link name="link">
         <collision name="col"><pose>0 0 0.25 0 0 0</pose>
           <geometry><box><size>1 0.15 0.5</size></box></geometry></collision>
@@ -177,7 +177,7 @@
     </model>
     <model name="inner_wall_5">
       <static>true</static>
-      <pose>1.9 0.4 0 0 0 0.0</pose>
+      <pose>0.0 -1.5 0 0 0 1.5708</pose>
       <link name="link">
         <collision name="col"><pose>0 0 0.25 0 0 0</pose>
           <geometry><box><size>1 0.15 0.5</size></box></geometry></collision>
@@ -189,7 +189,7 @@
     </model>
     <model name="inner_wall_6">
       <static>true</static>
-      <pose>-0.5 1.5 0 0 0 0.0</pose>
+      <pose>2.0 -0.5 0 0 0 1.5708</pose>
       <link name="link">
         <collision name="col"><pose>0 0 0.25 0 0 0</pose>
           <geometry><box><size>1 0.15 0.5</size></box></geometry></collision>
@@ -201,7 +201,19 @@
     </model>
     <model name="inner_wall_7">
       <static>true</static>
-      <pose>-1.2 0.092 0 0 0 -1.5708</pose>
+      <pose>-1.5 -2.5 0 0 0 0.0</pose>
+      <link name="link">
+        <collision name="col"><pose>0 0 0.25 0 0 0</pose>
+          <geometry><box><size>1 0.15 0.5</size></box></geometry></collision>
+        <visual name="vis"><pose>0 0 0.25 0 0 0</pose>
+          <geometry><box><size>1 0.15 0.5</size></box></geometry>
+          <material><ambient>0.6 0.4 0.2 1</ambient><diffuse>0.6 0.4 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="inner_wall_8">
+      <static>true</static>
+      <pose>1.5 -2.5 0 0 0 0.0</pose>
       <link name="link">
         <collision name="col"><pose>0 0 0.25 0 0 0</pose>
           <geometry><box><size>1 0.15 0.5</size></box></geometry></collision>
@@ -214,7 +226,7 @@
     <!-- ── moving obstacles (animated by dynamic_obstacle_node) ── -->
     <model name="moving_obs_1">
       <static>true</static>
-      <pose>2 2 0 0 0 0</pose>
+      <pose>2.8 2.8 0 0 0 0</pose>
       <link name="link"><pose>0 0 0.25 0 0 0</pose>
         <collision name="col">
           <geometry><cylinder><radius>0.16</radius><length>0.5</length></cylinder></geometry></collision>
@@ -226,7 +238,7 @@
     </model>
     <model name="moving_obs_2">
       <static>true</static>
-      <pose>-2 -2 0 0 0 0</pose>
+      <pose>-2.8 -2.8 0 0 0 0</pose>
       <link name="link"><pose>0 0 0.25 0 0 0</pose>
         <collision name="col">
           <geometry><cylinder><radius>0.16</radius><length>0.5</length></cylinder></geometry></collision>
@@ -238,7 +250,7 @@
     </model>
     <model name="moving_obs_3">
       <static>true</static>
-      <pose>2 -2 0 0 0 0</pose>
+      <pose>2.8 -2.8 0 0 0 0</pose>
       <link name="link"><pose>0 0 0.25 0 0 0</pose>
         <collision name="col">
           <geometry><cylinder><radius>0.16</radius><length>0.5</length></cylinder></geometry></collision>
@@ -250,7 +262,7 @@
     </model>
     <model name="moving_obs_4">
       <static>true</static>
-      <pose>-2 2 0 0 0 0</pose>
+      <pose>-2.8 2.8 0 0 0 0</pose>
       <link name="link"><pose>0 0 0.25 0 0 0</pose>
         <collision name="col">
           <geometry><cylinder><radius>0.16</radius><length>0.5</length></cylinder></geometry></collision>
@@ -262,7 +274,7 @@
     </model>
     <model name="moving_obs_5">
       <static>true</static>
-      <pose>-2 0 0 0 0 0</pose>
+      <pose>-2.8 0 0 0 0 0</pose>
       <link name="link"><pose>0 0 0.25 0 0 0</pose>
         <collision name="col">
           <geometry><cylinder><radius>0.16</radius><length>0.5</length></cylinder></geometry></collision>
@@ -274,7 +286,7 @@
     </model>
     <model name="moving_obs_6">
       <static>true</static>
-      <pose>2 0 0 0 0 0</pose>
+      <pose>2.8 0 0 0 0 0</pose>
       <link name="link"><pose>0 0 0.25 0 0 0</pose>
         <collision name="col">
           <geometry><cylinder><radius>0.16</radius><length>0.5</length></cylinder></geometry></collision>
@@ -466,7 +478,7 @@
             </scan>
             <range>
               <min>0.120</min>
-              <max>3.5</max>
+              <max>6.0</max>
               <resolution>0.015</resolution>
             </range>
             <noise>

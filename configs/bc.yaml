@@ -17,7 +17,7 @@ bc:
 # at training (computed offline from the bag) and at eval time (live).
 env:
   lidar_bins: 36
-  max_lidar_range: 6.0   # stage 11 uses 6m lidar; for stage 4 set this to 3.5
+  max_lidar_range: 6.0   # stage 5 uses 6m lidar; for stage 4 set this to 3.5
   collision_threshold: 0.13
   tb3_model: "waffle_pi"
   goal_tolerance: 0.40   # match Nav2's xy_goal_tolerance the demos were collected with

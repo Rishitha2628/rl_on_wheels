@@ -144,19 +144,16 @@ m/s and 2.0 rad/s caps are the manufacturer-spec maxes for Waffle Pi.
 
 ### Stages
 
-The arena layout varies per stage. Stages 1-10 are 5×5 m; stage 11 is
+The arena layout varies per stage. Stages 1-4 are 5×5 m; stage 5 is
 7×7 m (introduced for the IRL phase to test generalisation).
 
-| Stage | Inner walls | Dynamic obstacles | Used for |
-| ----- | ----------- | ----------------- | -------- |
-| 1     | no          | 0                 | empty-arena RL warm-up |
-| 2     | no          | 4 static          | static-obstacle test |
-| 3     | no          | 4 small oscillation | gentle dynamic |
-| 4     | 7 segments  | 2 keyframe        | **canonical training stage** |
-| 5     | 7 segments  | 6 keyframe        | more dynamics |
-| 6     | no          | 6 keyframe        | open arena + dynamics |
-| 7-10  | 7 segments  | 2 keyframe        | eval variants |
-| 11    | 8 segments  | 6 keyframe        | **7×7 generalisation probe** |
+| Stage | Arena | Inner walls | Dynamic obstacles | Used for |
+| ----- | ----- | ----------- | ----------------- | -------- |
+| 1     | 5×5   | no          | 0                 | empty-arena RL warm-up |
+| 2     | 5×5   | no          | 4 static          | static-obstacle test |
+| 3     | 5×5   | no          | 4 small oscillation | gentle dynamic |
+| 4     | 5×5   | 7 segments  | 2 keyframe        | **canonical RL + BC training stage** |
+| 5     | 7×7   | 8 segments  | 6 keyframe        | **generalisation probe / IRL phase** |
 
 ### Reward function (used by RL phases)
 
@@ -369,9 +366,9 @@ avoidance competence that would let it generalise.
 This is *the* well-known problem with RL on fixed-environment
 benchmarks — and it's the reason the field has moved toward
 domain-randomised training and curriculum learning. We had a
-curriculum (stages 1-10) but in practice each stage was a separate
-training run, and the policy that came out of stage-4 training
-didn't transfer cleanly to stages 5-10.
+curriculum (stages 1-4 of increasing difficulty) but in practice each
+stage was a separate training run, and the policy that came out of
+stage-4 training didn't transfer cleanly to slightly-different layouts.
 
 ### Why we moved off TD3 to imitation learning
 
@@ -626,15 +623,15 @@ useful again.
 
 Result on stage 4: DAgger iter 1 → 50 % → iter 2 → 84 %.
 
-### Stage 11: the 7×7 generalisation arena
+### Stage 5: the 7×7 generalisation arena
 
 Built specifically for the IRL phase: bigger arena, 8 inner walls
 spread out instead of 7 clustered, 6 dynamic cylinders instead of 2,
 outer walls scaled from ±2.425 to ±3.425 m.
 
-### Issue: lidar/arena ratio collapse on stage 11
+### Issue: lidar/arena ratio collapse on stage 5
 
-**Symptom**: BC trained on stage 11 demos at the default 3.5 m lidar
+**Symptom**: BC trained on stage 5 demos at the default 3.5 m lidar
 range plateaued at 32-42 % (noisy). DAgger iter 1 actively hurt the
 policy (dropped to ~10 %).
 
@@ -643,16 +640,16 @@ policy (dropped to ~10 %).
 — BC has *less context per observation* than it did on stage 4. Same
 network, harder problem.
 
-**Fix**: bump the lidar hardware max from 3.5 m to 6.0 m on stage 11.
+**Fix**: bump the lidar hardware max from 3.5 m to 6.0 m on stage 5.
 
-- SDF: `<max>3.5</max> → <max>6.0</max>` in `tb3_stage11.sdf`'s lidar sensor.
+- SDF: `<max>3.5</max> → <max>6.0</max>` in `tb3_stage5.sdf`'s lidar sensor.
 - Launch: `max_lidar_range` parameter becomes stage-conditional via
-  PythonExpression in `bridge.launch.py` (6.0 only for stage 11, 3.5
+  PythonExpression in `bridge.launch.py` (6.0 only for stage 5, 3.5
   otherwise).
 - All scaling that uses `max_lidar_range` (normalisation in env_bridge,
   build_dataset, eval safety thresholds) auto-adjusts.
 
-### Issue: scaling safety thresholds for stage 11
+### Issue: scaling safety thresholds for stage 5
 
 **Symptom**: after the lidar bump to 6.0 m, the eval-time safety
 overrides started firing constantly. Robot was paralysed.
@@ -672,7 +669,7 @@ front_threshold = 0.45 / max_range    # physical 0.45 m, normalised
 ```
 
 Now the threshold autoscales correctly with `max_lidar_range`. Stage 4
-still gets 0.13 (= 0.45/3.5); stage 11 gets 0.075 (= 0.45/6.0).
+still gets 0.13 (= 0.45/3.5); stage 5 gets 0.075 (= 0.45/6.0).
 
 ### Issue: side-wall scraping (the visually-obvious one)
 
@@ -733,7 +730,7 @@ last 0.7 m of approach and reliably closes the gap.
 | + DAgger iter 2 | **84 %** | +1326 | 204 |
 | + Frame stacking | 80 % | +1207 | 168 |
 
-**Stage 11 (7×7 maze, 6 dynamic cylinders)**:
+**Stage 5 (7×7 maze, 6 dynamic cylinders)**:
 
 | Config | Success | Mean reward | Mean len |
 | ------ | ------- | ----------- | -------- |
@@ -756,7 +753,7 @@ Two goals:
 2. **Try to exceed the expert.** In theory, an IRL-recovered reward
    could be optimised by an RL agent to find a policy *better* than
    the demonstrator. The hope was for a policy that approaches or
-   exceeds Nav2's 89 % on stage 11.
+   exceeds Nav2's 89 % on stage 5.
 
 This is on the `irl` branch.
 
@@ -978,7 +975,7 @@ Optimising it converges to "looks like Nav2" ≈ "what BC produces."
 ### Issue: frame stacking hurts AIRL (the counter-intuitive one)
 
 **Hypothesis going in**: frame stacking lifted BC from 52 % → 62 %
-on stage 11. Apply the same trick to AIRL → should give similar
+on stage 5. Apply the same trick to AIRL → should give similar
 +10 pp.
 
 **Result**: AIRL with frame_stack=4 collapsed to **16 % adversarial,
@@ -996,7 +993,7 @@ So: **frame stacking helps BC because BC is supervised; it hurts
 AIRL because AIRL is adversarial + RL-bottlenecked**. A non-obvious
 finding worth documenting.
 
-### Final AIRL results (50-ep deterministic eval, stage 11)
+### Final AIRL results (50-ep deterministic eval, stage 5)
 
 | Variant | Success | Mean reward | Mean len |
 | ------- | ------- | ----------- | -------- |
@@ -1036,7 +1033,7 @@ contribution** — interpretable artifacts BC cannot produce.
 
 ## 7. Final comparison and what we learned
 
-### The headline table (stage 11, 50-ep eval)
+### The headline table (stage 5, 50-ep eval)
 
 | Method | Success | Notes |
 | ------ | ------- | ----- |
@@ -1045,7 +1042,7 @@ contribution** — interpretable artifacts BC cannot produce.
 | BC alone (matched eval) | 52 % | imitation baseline |
 | Phase 2 PPO + frozen AIRL reward | 50 % | matches BC |
 | AIRL adversarial | 46 % | matches BC within noise |
-| (TD3 not rerun on stage 11) | — | implemented for stages 4+ |
+| (TD3 not rerun on stage 5) | — | implemented for stages 4+ |
 
 ### Key technical takeaways
 
@@ -1067,7 +1064,7 @@ contribution** — interpretable artifacts BC cannot produce.
 
 5. **Lidar/arena ratio matters for navigation policies**. The same
    lidar range gives a smaller fraction of the world in a bigger
-   arena. Stage 11 needed 6 m lidar to match the implicit
+   arena. Stage 5 needed 6 m lidar to match the implicit
    "observability fraction" of stage 4.
 
 6. **The IRL contribution is the recovered reward function, not the
@@ -1242,7 +1239,7 @@ contribution** — interpretable artifacts BC cannot produce.
 ### "What did frame stacking change?"
 
 > For BC: lifted stage 4 from 28 % → 80 % effectively (combined with
-> DAgger) and stage 11 from ~42 % → 62 %. The reason: dynamic
+> DAgger) and stage 5 from ~42 % → 62 %. The reason: dynamic
 > obstacles are invisible to a single-frame policy — it can't tell
 > a static wall from a moving cylinder at the same lidar reading.
 > Stacking 4 frames lets the network compute lidar deltas implicitly

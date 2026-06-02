@@ -12,8 +12,8 @@ Sweeps:
 
 Usage:
     python3 /airl/inspect_reward.py \\
-        --checkpoint-dir /checkpoints/airl_stage11 \\
-        --out-dir /logs/airl_reward_inspect_stage11
+        --checkpoint-dir /checkpoints/airl_stage5 \\
+        --out-dir /logs/airl_reward_inspect_stage5
 """
 
 from __future__ import annotations

@@ -4,12 +4,11 @@ Usage:
     ros2 launch tb3_rl_bridge bridge.launch.py stage:=4
 
 Stages:
-    1   — empty arena
-    2,3 — 4 static cylinders
-    4   — inner walls + 2 moving obstacles  (canonical training stage)
-    5   — inner walls + 6 moving obstacles
-    6   — 6 moving obstacles (no inner walls)
-    7-10 — inner walls + 2 moving obstacles (variants for eval)
+    1 — empty arena (5x5)
+    2 — 4 static cylinders (5x5)
+    3 — 4 cylinders with small oscillations (5x5)
+    4 — inner walls + 2 dynamic cylinders (5x5) — canonical training stage
+    5 — 7x7 maze, 8 inner walls + 6 dynamic cylinders — generalisation arena
 """
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -39,31 +38,15 @@ STAGE_OBSTACLES = {
     "3":  {"active": "1,2,3,4", "motion_mode": "stage3",
            "base_x": [-1.0, -1.0,  1.0, 1.0],
            "base_y": [-1.0,  1.0, -1.0, 1.0]},
-    # Stages 4-10 — keyframe paths.
+    # Stage 4 — canonical training stage. 5x5 arena, 7 inner walls,
+    # 2 keyframe cylinders.
     "4":  {"active": "1,2", "motion_mode": "keyframe",
            "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
            "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
+    # Stage 5 — 7x7 generalisation arena. 8 interior walls + 6 keyframe
+    # cylinders. Bases scaled to ±2.8 so the cylinders cover the larger
+    # arena evenly.
     "5":  {"active": "1,2,3,4,5,6", "motion_mode": "keyframe",
-           "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
-           "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
-    "6":  {"active": "1,2,3,4,5,6", "motion_mode": "keyframe",
-           "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
-           "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
-    "7":  {"active": "1,2", "motion_mode": "keyframe",
-           "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
-           "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
-    "8":  {"active": "1,2", "motion_mode": "keyframe",
-           "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
-           "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
-    "9":  {"active": "1,2", "motion_mode": "keyframe",
-           "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
-           "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
-    "10": {"active": "1,2", "motion_mode": "keyframe",
-           "base_x": [2.0, -2.0,  2.0, -2.0, -2.0, 2.0],
-           "base_y": [2.0, -2.0, -2.0,  2.0,  0.0, 0.0]},
-    # Stage 11 — 7x7 arena, 8 interior walls + 6 keyframe cylinders. Bases
-    # scaled to ±2.8 so the cylinders cover the larger arena evenly.
-    "11": {"active": "1,2,3,4,5,6", "motion_mode": "keyframe",
            "base_x": [2.8, -2.8,  2.8, -2.8, -2.8, 2.8],
            "base_y": [2.8, -2.8, -2.8,  2.8,  0.0, 0.0]},
 }
@@ -81,7 +64,7 @@ def generate_launch_description():
     step_duration   = LaunchConfiguration("step_duration",    default="0.1")
     headless        = LaunchConfiguration("headless",         default="false")
     dynamic_obstacles = LaunchConfiguration("dynamic_obstacles", default="true")
-    # "keyframe" = full per-obstacle paths (default for stages 4-10).
+    # "keyframe" = full per-obstacle paths (default for stages 4-5).
     # "stage3"   = small ±0.4 m local oscillations — easier for Nav2 to navigate around.
     motion_mode_override = LaunchConfiguration("motion_mode", default="")
     # >1 slows the cylinders proportionally. 3 = 1/3rd speed, etc.
@@ -109,7 +92,7 @@ def generate_launch_description():
 
     nodes = [
         DeclareLaunchArgument("stage",               default_value="4",
-                              description="Stage number 1-10"),
+                              description="Stage number 1-5"),
         DeclareLaunchArgument("use_sim_time",        default_value="true"),
         DeclareLaunchArgument("collision_threshold", default_value="0.13"),
         DeclareLaunchArgument("max_lidar_range",     default_value="3.5"),
@@ -153,11 +136,11 @@ def generate_launch_description():
             output="screen",
             parameters=[{
                 "use_sim_time": use_sim_time,
-                # Stage 11 (7x7 arena) needs a longer lidar reach so BC sees a
+                # Stage 5 (7x7 arena) needs a longer lidar reach so BC sees a
                 # comparable fraction of the world per observation. Hardware
-                # max in tb3_stage11.sdf was also bumped to 6.0 m to match.
+                # max in tb3_stage5.sdf was also bumped to 6.0 m to match.
                 "max_lidar_range": ParameterValue(
-                    PythonExpression(["6.0 if '", stage, "' == '11' else 3.5"]),
+                    PythonExpression(["6.0 if '", stage, "' == '5' else 3.5"]),
                     value_type=float),
                 "lidar_bins": lidar_bins,
                 "collision_threshold": collision_thr,
@@ -179,19 +162,19 @@ def generate_launch_description():
                 "use_sim_time": use_sim_time,
                 "tb3_model": "waffle_pi",
                 "world_name": "empty",
-                # Arena bounds: walls at ±2.425 (5x5 stages) or ±3.425 (stage 11),
+                # Arena bounds: walls at ±2.425 (5x5 stages) or ±3.425 (stage 5),
                 # clear inner area ≈ [-2.0, 2.0] or [-2.5, 2.5] respectively.
                 "world_x_min": ParameterValue(
-                    PythonExpression(["-2.5 if '", stage, "' == '11' else -2.0"]),
+                    PythonExpression(["-2.5 if '", stage, "' == '5' else -2.0"]),
                     value_type=float),
                 "world_x_max": ParameterValue(
-                    PythonExpression(["2.5 if '", stage, "' == '11' else 2.0"]),
+                    PythonExpression(["2.5 if '", stage, "' == '5' else 2.0"]),
                     value_type=float),
                 "world_y_min": ParameterValue(
-                    PythonExpression(["-2.5 if '", stage, "' == '11' else -2.0"]),
+                    PythonExpression(["-2.5 if '", stage, "' == '5' else -2.0"]),
                     value_type=float),
                 "world_y_max": ParameterValue(
-                    PythonExpression(["2.5 if '", stage, "' == '11' else 2.0"]),
+                    PythonExpression(["2.5 if '", stage, "' == '5' else 2.0"]),
                     value_type=float),
                 "robot_min_goal_dist": 0.5,
                 # Sphere radius matches goal_tolerance so the visible sphere
@@ -201,7 +184,7 @@ def generate_launch_description():
                 # Fixed robot spawn. spawn_x/y/theta below are used only
                 # when reset_node's per-stage override doesn't fire (i.e.,
                 # the stage isn't recognized). Stages 1-3 spawn at (0, 0)
-                # and stages 4-10 at (-0.7, 0) — reset_node picks the
+                # and stages 4-5 at (-0.7, 0) — reset_node picks the
                 # right one based on the `stage` param.
                 "fixed_spawn": True,
                 "spawn_x":    -0.7,
@@ -210,10 +193,10 @@ def generate_launch_description():
                 # Goal validity needs stage to know which inner-wall
                 # rectangles to forbid.
                 "arena_length": ParameterValue(
-                    PythonExpression(["6.2 if '", stage, "' == '11' else 4.2"]),
+                    PythonExpression(["6.2 if '", stage, "' == '5' else 4.2"]),
                     value_type=float),
                 "arena_width": ParameterValue(
-                    PythonExpression(["6.2 if '", stage, "' == '11' else 4.2"]),
+                    PythonExpression(["6.2 if '", stage, "' == '5' else 4.2"]),
                     value_type=float),
                 "stage":        stage,
             }],

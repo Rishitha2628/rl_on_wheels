@@ -9,7 +9,7 @@ Frame stacking: with --frame-stack k, each per-step observation becomes
 the concatenation of the last k single-frame obs within the episode
 (padded by repeating the first obs for the first k-1 steps). This gives
 the policy temporal context — same trick as bc/train.py used to lift BC
-from 52 % to 62 % on stage 11.
+from 52 % to 62 % on stage 5.
 
 Caveat: the BC NPZ has N obs and N actions per episode (the obs at each
 /cmd_vel time), but no "next state" for the final action. We drop the
@@ -18,8 +18,8 @@ last action so an N-pair episode produces T = N-1 transitions with T+1
 
 Usage (inside container):
     python3 /airl/convert_demos.py \\
-        --npz /demos/stage11_bc_6m.npz \\
-        --out /demos/stage11_trajectories_fs4.pkl \\
+        --npz /demos/stage5_bc_6m.npz \\
+        --out /demos/stage5_trajectories_fs4.pkl \\
         --frame-stack 4
 """
 
