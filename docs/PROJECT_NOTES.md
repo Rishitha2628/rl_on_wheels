@@ -338,23 +338,76 @@ frequency drops to 2.5 Hz. Smoother motion, less physics stress, also
 4× more sim-time per policy decision → effectively faster training
 progress per env step.
 
+### The bigger problem: TD3 was memorising, not learning to navigate
+
+The plateau itself was a numerical symptom; the deeper concern was
+**what the policy had actually learned**. Looking at TD3's rollouts
+qualitatively:
+
+- The policy did well on its *training stage* (stage 4) — that's
+  where the 59 % number came from.
+- But the *trajectories looked like memorisation*. The robot was
+  taking very specific paths consistent with the specific wall
+  positions of stage 4, not paths that responded to lidar geometry
+  in general. If you watched the rollout it almost looked like the
+  robot was following a hand-drawn route, not "see obstacle → turn
+  away."
+- This is the classic **state-space overfitting** failure mode of
+  RL trained on a fixed environment: the policy learns the
+  *specific* `(absolute_lidar_pattern, action)` mapping that's
+  rewarded, rather than the *general* `(obstacle-direction, turn-
+  away)` rule that would transfer.
+
+The practical evidence: when I evaluated the TD3 checkpoint on stages
+with the same physics + similar but not identical wall layouts, the
+success rate dropped sharply. The policy was *stage-specific*, not a
+general navigator. Reward shaping had pushed the policy into a local
+optimum where it could collect distance-reward + face-goal-reward on
+the trained layout, without developing the underlying obstacle-
+avoidance competence that would let it generalise.
+
+This is *the* well-known problem with RL on fixed-environment
+benchmarks — and it's the reason the field has moved toward
+domain-randomised training and curriculum learning. We had a
+curriculum (stages 1-10) but in practice each stage was a separate
+training run, and the policy that came out of stage-4 training
+didn't transfer cleanly to stages 5-10.
+
 ### Why we moved off TD3 to imitation learning
 
-After characterising TD3's plateau and the difficulty of pushing past
-it on dynamic-obstacle stages, two observations crystallised:
+Three reasons crystallised:
 
-1. **Nav2 was already sitting in our ROS2 workspace**. It's a
-   production-grade mobile-robot navigator with global path planning,
-   local control (Regulated Pure Pursuit), and behaviour-tree recovery
-   logic. It handles stage 4-style scenarios *much* better than our
-   TD3 baseline ever would.
-2. **Sim throughput was the binding constraint**. RL papers train on
+1. **TD3 was overfitting to the layout, not learning navigation.**
+   See above. Even if we'd pushed past the 59 % plateau on stage 4,
+   we'd have a stage-4-specialist, not a generalist navigator.
+2. **Nav2 was already sitting in our ROS2 workspace.** It's a
+   production-grade mobile-robot navigator with global path planning
+   (NavFn over a costmap), local control (Regulated Pure Pursuit),
+   and behaviour-tree recovery logic. Crucially, **Nav2's behaviour
+   is fundamentally generalisable** — it's running classical
+   planning algorithms over a costmap, not memorised state-action
+   pairs. A policy that imitates Nav2 should inherit at least some
+   of that generalisability, since the demos themselves come from a
+   general planner reasoning about the local geometry rather than
+   the specific layout.
+3. **Sim throughput was the binding constraint.** RL papers train on
    millions of env steps with vectorised parallel sims. We had a
    single ROS sim at 10 Hz. Continuing to push TD3 was diminishing
-   returns; we'd take 50 hours to maybe gain another 10 pp.
+   returns; we'd take 50+ hours to maybe gain another 10 pp on stage
+   4, and we'd still have a stage-4-specialist at the end.
 
 So we pivoted: use Nav2 as a *teacher*, do supervised imitation from
 its trajectories. That's Phase 3.
+
+One honest caveat worth knowing: BC has its own overfitting failure
+mode (covariate shift — the policy fails when it visits states the
+expert never showed it). We addressed that with DAgger in Phase 3 and
+saw the same generalisation hypothesis bear out qualitatively — the
+BC + DAgger policy navigated through the dynamic-obstacle stages with
+behaviour that *looked* like "see obstacle → turn away," not "follow
+a specific path." The 84 % stage 4 result with much shorter mean
+episode lengths than TD3 backs this up: BC was finding direct routes
+to the goal, not memorised long routes.
 
 ---
 
@@ -1069,6 +1122,36 @@ contribution** — interpretable artifacts BC cannot produce.
 > made debugging the training curves easier. For a project where the
 > sim was the bottleneck and I wanted to spend debugging effort on
 > the environment and reward design, TD3's fewer-knobs profile won.
+
+### "Why did you move off TD3 to imitation learning?"
+
+> Two reasons, and the second is the more important one. The first is
+> the obvious one — TD3 plateaued at ~59 % on the canonical training
+> stage even after dropping the LR and reducing exploration noise,
+> and pushing further would have taken tens of hours on a single
+> 10 Hz sim for diminishing returns.
+>
+> The more important reason is that TD3 was *overfitting to the
+> layout*. When I watched the rollouts, the policy was taking very
+> specific routes that matched the specific wall positions of stage
+> 4, not paths that would respond to lidar geometry in general. It
+> was a stage-4-specialist, not a general navigator. This is the
+> classic state-space overfitting failure of RL on a fixed
+> environment — the policy memorises `(absolute_lidar_pattern,
+> action)` pairs that get rewarded, rather than the underlying
+> `(obstacle-direction, turn-away)` rule. Evaluating on similar but
+> non-identical layouts confirmed it — success dropped sharply.
+>
+> Imitating Nav2 was the right pivot because Nav2's behaviour is
+> fundamentally generalisable — it runs classical path planning
+> (NavFn over a costmap) plus a regulated pure pursuit controller,
+> reasoning about local geometry rather than memorised state-action
+> pairs. A policy that imitates Nav2 should inherit some of that
+> generalisability since the demos themselves come from a general
+> planner. The BC + DAgger policy on stage 4 (84 % with much shorter
+> mean episode lengths than TD3) bears this out — it found direct
+> routes to the goal, behaviour that looked like "see obstacle →
+> turn away" rather than memorised long routes.
 
 ### "What was the hardest debugging session?"
 
