@@ -1,13 +1,6 @@
 # rl_on_wheels
 
-<p align="center">
-  <video src="docs/media/docs_media_demo.mp4" controls width="720"></video>
-</p>
-
-
 https://github.com/user-attachments/assets/d807a534-3d17-4f3a-8efa-861af5b8f4ba
-
-
 
 Goal-conditioned mobile robot navigation on TurtleBot3 Waffle Pi
 in ROS2 Humble + Ignition Fortress (Gazebo Sim). Same env, same 2D LiDAR
