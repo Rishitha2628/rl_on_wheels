@@ -1,7 +1,7 @@
 # rl_on_wheels
 
 <p align="center">
-  <video src="docs/media/docs_media_demo.mp4" controls width="720"></video>
+  <video src="https://github.com/Rishitha2628/rl_on_wheels/raw/irl/docs/media/docs_media_demo.mp4" controls width="720"></video>
 </p>
 
 > If the embedded video doesn't play in your browser, watch it directly
