@@ -1,7 +1,7 @@
 # rl_on_wheels
 
 <p align="center">
-  <video src="docs/media/demo.mov" controls width="720"></video>
+  <video src="docs/media/docs_media_demo.mp4" controls width="720"></video>
 </p>
 
 > If the embedded video doesn't play in your browser, watch it directly
