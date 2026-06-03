@@ -5,7 +5,7 @@
 </p>
 
 > If the embedded video doesn't play in your browser, watch it directly
-> at [docs/media/demo.mov](docs/media/demo.mov).
+> at [docs/media/docs_media_demo.mp4](docs/media/docs_media_demo.mp4).
 
 Goal-conditioned mobile robot navigation on TurtleBot3 Waffle Pi
 in ROS2 Humble + Ignition Fortress (Gazebo Sim). Same env, same 2D LiDAR
