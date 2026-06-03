@@ -14,6 +14,7 @@ every transition, every issue, every fix.
 6. [Phase 4: Inverse RL (AIRL)](#6-phase-4-inverse-rl-airl)
 7. [Final comparison and what we learned](#7-final-comparison-and-what-we-learned)
 8. [Q&A: likely interview questions](#8-qa-likely-interview-questions)
+9. [Mathematical reference](#9-mathematical-reference)
 
 ---
 
@@ -1264,3 +1265,477 @@ contribution** — interpretable artifacts BC cannot produce.
 > meaningfully exceeding BC on real tasks. Last week: writeup,
 > result reproducibility, and a real-robot deployment test of the
 > best BC + DAgger policy as the sim-to-real transfer experiment.
+
+---
+
+## 9. Mathematical reference
+
+Everything below is the math behind the methods we used, written at the
+level needed to *explain in an interview* without hand-waving.
+
+### 9.1 MLP forward pass
+
+A multilayer perceptron with hidden sizes $[h_1, h_2, \ldots, h_L]$ is a
+sequence of affine transformations interleaved with elementwise
+non-linearities.
+
+For input $x \in \mathbb{R}^d$ and layer $\ell$:
+
+$$
+z_\ell = W_\ell h_{\ell-1} + b_\ell, \quad h_\ell = \phi(z_\ell)
+$$
+
+where $h_0 = x$, $W_\ell \in \mathbb{R}^{h_\ell \times h_{\ell-1}}$,
+$b_\ell \in \mathbb{R}^{h_\ell}$, and $\phi$ is the activation. In this
+project the hidden activations are **ReLU**: $\phi(z) = \max(0, z)$,
+applied elementwise.
+
+**Output head depends on the method**:
+
+- **BC** uses a `tanh` head so actions are in $[-1, 1]$ and then
+  affinely rescaled to the env's action bounds:
+  $a = \tanh(W_L h_{L-1} + b_L)$.
+- **TD3 actor** also outputs through `tanh` then rescales to action bounds
+  (same shape as BC).
+- **SAC actor** outputs $(\mu, \log\sigma)$ for a squashed Gaussian; the
+  policy samples $u \sim \mathcal{N}(\mu, \sigma^2)$ then squashes
+  $a = \tanh(u)$ and corrects for the squash in the log-prob (see §9.8).
+- **PPO actor** outputs $\mu$ from the network and learns a separate
+  per-dim `log_std` parameter; actions are sampled
+  $a \sim \mathcal{N}(\mu, \exp(2 \cdot \log\sigma))$.
+
+Our hidden sizes are `[512, 512]` for all methods (`net_arch=[512, 512]`
+in every config). So three weight matrices: $W_1 \in \mathbb{R}^{512
+\times d_{in}}$, $W_2 \in \mathbb{R}^{512 \times 512}$, $W_3 \in
+\mathbb{R}^{d_{out} \times 512}$.
+
+### 9.2 Activations
+
+**ReLU** (hidden layers everywhere):
+
+$$
+\phi(z) = \max(0, z), \quad \phi'(z) = \mathbb{1}[z > 0]
+$$
+
+Chosen for: simple gradient, no vanishing gradient issue, sparse
+activations.
+
+**Tanh** (output for BC and TD3):
+
+$$
+\tanh(z) = \frac{e^z - e^{-z}}{e^z + e^{-z}}, \quad \tanh'(z) = 1 -
+\tanh^2(z)
+$$
+
+Bounded to $(-1, 1)$, which we then linearly rescale to the env's action
+range. Why tanh and not sigmoid: tanh is zero-centred which keeps the
+optimiser dynamics symmetric across positive and negative actions.
+
+### 9.3 Forward + loss for BC
+
+BC is plain supervised regression. Given expert dataset $\{(s_i, a_i)\}_{i=1}^N$:
+
+1. **Normalise actions** to the tanh range:
+   $$
+   \tilde{a}_i = 2 \frac{a_i - a_{low}}{a_{high} - a_{low}} - 1
+   $$
+2. **Forward pass**: $\hat{a}_i = \pi_\theta(s_i)$ where $\pi_\theta$ is
+   the MLP with tanh head.
+3. **MSE loss**:
+   $$
+   \mathcal{L}_{BC}(\theta) = \frac{1}{N} \sum_{i=1}^N \|\pi_\theta(s_i) -
+   \tilde{a}_i\|_2^2
+   $$
+4. **Gradient step**: $\theta \leftarrow \theta - \eta \nabla_\theta
+   \mathcal{L}_{BC}$, using Adam.
+
+At inference, the network output is rescaled back:
+$$
+a = a_{low} + \frac{1}{2}(\pi_\theta(s) + 1)(a_{high} - a_{low})
+$$
+
+### 9.4 Backprop and Adam
+
+The gradient $\nabla_\theta \mathcal{L}$ is computed by reverse-mode
+autodiff: for each layer, given the gradient of the loss with respect
+to the output of that layer, compute the gradients with respect to the
+weights and propagate backward to the input.
+
+For a linear layer $h = Wx + b$ with upstream gradient $\partial
+\mathcal{L} / \partial h$:
+
+$$
+\frac{\partial \mathcal{L}}{\partial W} = \frac{\partial
+\mathcal{L}}{\partial h} \, x^\top, \quad
+\frac{\partial \mathcal{L}}{\partial b} = \frac{\partial
+\mathcal{L}}{\partial h}, \quad
+\frac{\partial \mathcal{L}}{\partial x} = W^\top \frac{\partial
+\mathcal{L}}{\partial h}
+$$
+
+For ReLU at $z$: $\partial \mathcal{L} / \partial z = (\partial
+\mathcal{L} / \partial h) \odot \mathbb{1}[z > 0]$.
+
+**Adam optimiser** (used everywhere in this project). For each parameter
+$\theta_t$ at step $t$, given gradient $g_t$:
+
+$$
+\begin{aligned}
+m_t &= \beta_1 m_{t-1} + (1-\beta_1) g_t \\
+v_t &= \beta_2 v_{t-1} + (1-\beta_2) g_t^2 \\
+\hat{m}_t &= m_t / (1 - \beta_1^t) \\
+\hat{v}_t &= v_t / (1 - \beta_2^t) \\
+\theta_{t} &= \theta_{t-1} - \eta \, \hat{m}_t / (\sqrt{\hat{v}_t} +
+\varepsilon)
+\end{aligned}
+$$
+
+Defaults: $\beta_1 = 0.9$, $\beta_2 = 0.999$, $\varepsilon = 10^{-8}$.
+The bias-corrected first moment $\hat{m}_t$ is roughly the average
+gradient direction; $\hat{v}_t$ is the average squared gradient (an
+estimate of per-parameter variance). Adam adaptively scales each
+parameter's update by $1/\sqrt{\hat{v}_t}$ so parameters with noisy
+gradients move less per step.
+
+### 9.5 Observation transformations
+
+**Lidar normalisation**: raw ranges in $[0, r_{max}]$ are clipped and
+divided:
+
+$$
+\ell_i^{norm} = \min(\ell_i, r_{max}) / r_{max} \in [0, 1]
+$$
+
+So $\ell_i = 1$ means "no obstacle within range" and $\ell_i = 0$ means
+"right against the lidar."
+
+**Goal direction in body frame** — given robot pose $(x_r, y_r, \theta_r)$
+and goal $(x_g, y_g)$:
+
+$$
+\Delta x = x_g - x_r, \quad \Delta y = y_g - y_r
+$$
+
+$$
+d = \sqrt{\Delta x^2 + \Delta y^2}, \quad d_{norm} = \min(d / r_{max}, 1)
+$$
+
+$$
+\psi_{body} = \arctan2(\Delta y, \Delta x) - \theta_r
+$$
+
+The observation stores $\cos\psi_{body}$ and $\sin\psi_{body}$ rather
+than $\psi_{body}$ itself — this avoids the angular discontinuity at
+$\pm\pi$ and is the canonical encoding for goal-conditioned navigation.
+
+**Goal-path clearance** $\ell_{goal\_min}$: minimum of the lidar bins
+inside a ±20° cone centred on $\psi_{body}$. With $K=36$ bins each
+covering 10°:
+
+$$
+b_{centre} = \left\lfloor \frac{(\psi_{body} \bmod 2\pi)}{2\pi/K} \right\rfloor,
+\quad
+\ell_{goal\_min} = \min_{b \in [b_{centre}-2,\, b_{centre}+2]} \ell_b^{norm}
+$$
+
+### 9.6 Frame stacking
+
+For stack size $k$, the policy input at time $t$ is the concatenation:
+
+$$
+x_t = [s_{t-(k-1)}, s_{t-(k-2)}, \ldots, s_{t-1}, s_t] \in \mathbb{R}^{k \cdot d}
+$$
+
+For the first $k-1$ steps of an episode the buffer is seeded by
+repeating $s_0$ so the input shape is fixed. The MLP then ingests
+$x_t$ as a single $kd$-dim vector — it never sees the time index
+explicitly, but consecutive lidar bins in the concatenation occupy
+different positions, so the first weight matrix can learn temporal
+filters (e.g. lidar bin $i$ at time $t-1$ minus lidar bin $i$ at time
+$t$ is just a difference of two specific input dims).
+
+### 9.7 DAgger
+
+Iterative refinement of BC. At iteration $i$:
+
+1. **Roll out** the current learner policy $\pi_{\theta_i}$ in the env
+   for $N$ episodes, collecting the visited states $\{s_t^{(i)}\}$.
+2. **Query the expert** $\pi^*$ at every visited state:
+   $a_t^* = \pi^*(s_t^{(i)})$.
+3. **Aggregate**: dataset becomes $\mathcal{D}_{i+1} = \mathcal{D}_i \cup
+   \{(s_t^{(i)}, a_t^*)\}$.
+4. **Retrain** BC on $\mathcal{D}_{i+1}$ to get $\pi_{\theta_{i+1}}$.
+
+In our setup the "expert query" is automated by the shadow-Nav2 trick
+(§5.6) — Nav2's actions go to `/cmd_vel_expert` while BC publishes
+`/cmd_vel`. The DAgger collector subscribes to `/cmd_vel_expert` to
+record $a_t^*$.
+
+**The covariate-shift bound** (Ross et al.) says BC's policy error
+grows as $O(T^2 \varepsilon)$ over horizon $T$ with imitation error
+$\varepsilon$, while DAgger's grows as $O(T \varepsilon)$. That's why
+DAgger helps so much: the error compounds linearly instead of
+quadratically.
+
+### 9.8 TD3 (Twin Delayed Deep Deterministic policy gradient)
+
+**Components**: deterministic actor $\pi_\theta(s)$, two critics
+$Q_{\phi_1}(s, a), Q_{\phi_2}(s, a)$, target networks for each
+($\pi_{\theta'}, Q_{\phi_1'}, Q_{\phi_2'}$). Replay buffer
+$\mathcal{D}$.
+
+**Critic update** — sample batch $(s, a, r, s', d)$ from $\mathcal{D}$:
+
+Target policy with smoothing noise:
+$$
+\tilde{a}' = \pi_{\theta'}(s') + \mathrm{clip}(\mathcal{N}(0, \sigma_t),
+-c, +c)
+$$
+
+Twin target value (take the minimum of the two target Q's — this
+prevents Q overestimation):
+$$
+y = r + \gamma (1 - d) \min_{j=1,2} Q_{\phi_j'}(s', \tilde{a}')
+$$
+
+Critic loss for each $i \in \{1, 2\}$:
+$$
+\mathcal{L}(\phi_i) = \frac{1}{|B|} \sum_{(s,a,r,s',d) \in B} \left(
+Q_{\phi_i}(s, a) - y \right)^2
+$$
+
+**Delayed policy update** — only every $d_{policy} = 2$ critic updates:
+$$
+\nabla_\theta J(\theta) = \frac{1}{|B|} \sum_s \nabla_a Q_{\phi_1}(s, a)
+\big|_{a=\pi_\theta(s)} \, \nabla_\theta \pi_\theta(s)
+$$
+
+**Polyak soft target updates** with $\tau = 0.003$:
+$$
+\theta' \leftarrow \tau \theta + (1 - \tau) \theta', \quad
+\phi_j' \leftarrow \tau \phi_j + (1 - \tau) \phi_j'
+$$
+
+**Exploration** is via Ornstein-Uhlenbeck noise added to the action at
+collection time (not at update time):
+$$
+\eta_{t+1} = \eta_t + \theta_{OU} (\mu - \eta_t) + \sigma \, \mathcal{N}(0, 1)
+$$
+with $\theta_{OU} = 0.15$, $\mu = 0$, $\sigma$ annealed from 0.1 → 0.05.
+
+### 9.9 SAC (Soft Actor-Critic)
+
+**The soft RL objective** maximises return plus entropy:
+
+$$
+J(\pi) = \mathbb{E}_{\tau \sim \pi}\left[ \sum_{t=0}^\infty \gamma^t \left(
+r(s_t, a_t) + \alpha \mathcal{H}(\pi(\cdot|s_t)) \right) \right]
+$$
+
+The temperature $\alpha$ trades reward maximisation for exploration.
+
+**Squashed-Gaussian policy** $\pi_\theta(a|s)$ with $a = \tanh(u)$,
+$u \sim \mathcal{N}(\mu_\theta(s), \sigma_\theta(s)^2)$. The log-prob
+must account for the tanh squash:
+$$
+\log \pi_\theta(a|s) = \log \mathcal{N}(u | \mu_\theta, \sigma_\theta) -
+\sum_{i} \log(1 - \tanh^2(u_i) + \varepsilon)
+$$
+
+**Soft Bellman backup**:
+$$
+y = r + \gamma \, \mathbb{E}_{a' \sim \pi_\theta(\cdot|s')} \left[
+\min_{j=1,2} Q_{\phi_j'}(s', a') - \alpha \log \pi_\theta(a'|s') \right]
+$$
+
+**Critic loss** same MSE shape as TD3:
+$$
+\mathcal{L}(\phi_i) = \frac{1}{|B|} \sum (Q_{\phi_i}(s, a) - y)^2
+$$
+
+**Actor loss** — minimise KL between policy and the soft-Boltzmann over
+Q. Equivalently:
+$$
+\mathcal{L}(\theta) = \mathbb{E}_{a \sim \pi_\theta} \left[ \alpha \log
+\pi_\theta(a|s) - \min_{j=1,2} Q_{\phi_j}(s, a) \right]
+$$
+
+**Automatic temperature tuning** — set a target entropy $\bar{\mathcal{H}}
+= -|A|$ (typical heuristic) and update $\alpha$ to keep policy entropy
+near it:
+$$
+\mathcal{L}(\alpha) = -\alpha \cdot (\log \pi_\theta(a|s) + \bar{\mathcal{H}})
+$$
+
+Our SAC config used `ent_coef: "auto"` (this) and `target_entropy:
+"auto"` (= -action_dim).
+
+### 9.10 PPO (Proximal Policy Optimization)
+
+**On-policy method** — collects a fresh batch of rollouts every
+iteration, computes advantages, does multiple gradient steps on a
+clipped surrogate objective.
+
+**Generalised advantage estimation (GAE)**. Given the value function
+$V_\phi$, compute the TD residuals along a trajectory:
+
+$$
+\delta_t = r_t + \gamma V_\phi(s_{t+1}) - V_\phi(s_t)
+$$
+
+Then GAE with parameter $\lambda$:
+
+$$
+\hat{A}_t = \sum_{l=0}^{T-t-1} (\gamma \lambda)^l \, \delta_{t+l}
+$$
+
+GAE smoothly interpolates between high-bias single-step ($\lambda=0$)
+and high-variance Monte Carlo ($\lambda=1$). Our config uses
+$\lambda = 0.95$.
+
+**The clipped surrogate objective** — define the importance ratio:
+
+$$
+r_t(\theta) = \frac{\pi_\theta(a_t | s_t)}{\pi_{\theta_{old}}(a_t | s_t)}
+$$
+
+The clipped objective is:
+
+$$
+\mathcal{L}^{CLIP}(\theta) = \mathbb{E}_t \left[ \min\left(
+r_t(\theta) \hat{A}_t,\,
+\mathrm{clip}(r_t(\theta), 1 - \epsilon, 1 + \epsilon) \hat{A}_t
+\right) \right]
+$$
+
+Maximising this updates $\theta$ toward higher advantage while clipping
+prevents the new policy from straying too far from the old. $\epsilon
+= 0.2$ in our config.
+
+**Value loss** — MSE against the bootstrapped return:
+
+$$
+\mathcal{L}^{VF}(\phi) = \mathbb{E}_t \left[ (V_\phi(s_t) - \hat{R}_t)^2
+\right], \quad \hat{R}_t = \hat{A}_t + V_{\phi_{old}}(s_t)
+$$
+
+**Entropy bonus** to encourage exploration:
+
+$$
+\mathcal{L}^{ENT}(\theta) = \mathbb{E}_t [\mathcal{H}(\pi_\theta(\cdot | s_t))]
+$$
+
+**Full PPO loss**:
+
+$$
+\mathcal{L}(\theta, \phi) = -\mathcal{L}^{CLIP} + c_1 \mathcal{L}^{VF}
+- c_2 \mathcal{L}^{ENT}
+$$
+
+with $c_1, c_2$ scalar weights.
+
+### 9.11 AIRL (Adversarial Inverse RL)
+
+AIRL trains two things simultaneously: a **discriminator** $D_{\omega}$
+that distinguishes expert from policy transitions, and a **policy**
+$\pi_\theta$ (PPO in our setup) that tries to fool the discriminator.
+
+**Discriminator architecture** — the key design choice that makes AIRL
+*recover a reward function* (not just a policy) is the **shaped
+discriminator**:
+
+$$
+f_\omega(s, a, s') = g_\omega(s, a) + \gamma h_\omega(s') - h_\omega(s)
+$$
+
+where $g_\omega$ is the **recovered reward** and $h_\omega$ is a state
+**potential function** that absorbs any reward shaping. The discriminator
+outputs:
+
+$$
+D_\omega(s, a, s') = \sigma\left( f_\omega(s, a, s') - \log \pi_\theta(a | s) \right)
+$$
+
+where $\sigma$ is the sigmoid. Importantly, $f$ enters the discriminator
+directly, but at policy-improvement time only $g$ matters for the
+optimal policy (the $h$ terms telescope in any trajectory return).
+
+**Discriminator loss** — binary cross-entropy. Let $y = 1$ for expert
+samples and $y = 0$ for policy samples:
+
+$$
+\mathcal{L}(\omega) = -\mathbb{E}_{\mathrm{expert}} \log D_\omega(s, a, s')
+- \mathbb{E}_{\mathrm{policy}} \log (1 - D_\omega(s, a, s'))
+$$
+
+**Policy reward** — what PPO maximises is the log-odds of the
+discriminator:
+
+$$
+r_{AIRL}(s, a, s') = \log D_\omega(s, a, s') - \log (1 - D_\omega(s, a, s'))
+= f_\omega(s, a, s') - \log \pi_\theta(a | s)
+$$
+
+At convergence the discriminator can't tell expert from policy
+($D = 0.5$ everywhere), the policy matches the expert distribution,
+and $g_\omega(s, a)$ is the **recovered reward function** we plot in
+`inspect_reward.py`.
+
+**Why $g(s, a) + \gamma h(s') - h(s)$ is the right shape**: it's
+mathematically equivalent to the AIRL reward up to potential-based
+shaping. Ng et al. proved that potential-based shaping doesn't change
+the optimal policy, so we can extract $g$ as the "clean" reward
+without the value-function-like potential absorbed into $h$.
+
+### 9.12 Adversarial training stability — why the LR matters
+
+When PPO does aggressive updates while $f_\omega$ is also moving, the
+policy can chase shortcuts in the discriminator that don't correspond
+to a navigable trajectory. The slow LR fix (§6.4) keeps the change in
+$\pi_\theta$ per outer iteration small enough that $f_\omega$ has time
+to fit a clean reward instead of chasing a moving target.
+
+Formally the trust-region requirement for stable adversarial training
+is roughly:
+
+$$
+\mathrm{KL}(\pi_\theta^{(t+1)} \,\|\, \pi_\theta^{(t)}) < \eta \cdot
+\mathrm{KL}(D_\omega^{(t+1)} \,\|\, D_\omega^{(t)})
+$$
+
+i.e. policy updates should be slower than discriminator updates by a
+factor $\eta < 1$. Lowering PPO's LR is the practical way to enforce
+this when the discriminator's update rate is fixed.
+
+### 9.13 Phase 2 — PPO against a frozen reward
+
+Once $f_\omega^*$ is recovered from AIRL and **frozen**, the problem
+reduces to standard PPO with a stationary reward:
+
+$$
+\pi^* = \arg\max_\pi \mathbb{E}_\tau \left[ \sum_{t=0}^\infty \gamma^t \,
+f_\omega^*(s_t, a_t, s_{t+1}) \right]
+$$
+
+All the PPO machinery in §9.10 applies directly. The only difference
+from standard PPO-against-env-reward is that the reward signal at each
+step comes from a forward pass through the frozen $f_\omega^*$ instead
+of from `env_bridge_node`'s shaping reward.
+
+In code (`airl/train_with_reward.py`), this is implemented as a gym
+wrapper that intercepts `env.step()`, computes the AIRL reward, and
+returns it in place of the env reward — PPO doesn't know the
+difference.
+
+### 9.14 Action rescaling at deployment
+
+For BC and TD3 (tanh head), eval-time rescale:
+
+$$
+a_{exec} = a_{low} + \tfrac{1}{2}(\tanh\text{-output} + 1)(a_{high} - a_{low})
+$$
+
+With our env: $a_{low} = (0, -2)$, $a_{high} = (0.22, 2)$.
+
+For SAC/PPO (Gaussian head), the action is sampled in unsquashed space,
+squashed by tanh, then rescaled to env bounds the same way.
