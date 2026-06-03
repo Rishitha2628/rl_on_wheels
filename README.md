@@ -46,10 +46,6 @@ strongest tool for raw policy quality, while AIRL contributes an
 interpretable reward function but no policy improvement.** See the
 [Inverse RL](#inverse-rl-airl) section for the full discussion.
 
-For a complete walk-through of the project journey — every transition
-(SAC → TD3 → BC + DAgger → AIRL), every issue, every fix, and an
-interview-prep Q&A — see **[docs/PROJECT_NOTES.md](docs/PROJECT_NOTES.md)**.
-
 ---
 
 ## Repository layout

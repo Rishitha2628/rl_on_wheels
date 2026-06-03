@@ -28,3 +28,4 @@ docker/*.egg-info
 # Keep two specific checkpoints (peak + latest) for reproducibility
 !checkpoints/td3_tb3_214000_steps.zip
 !checkpoints/td3_tb3_304000_steps.zip
+docs/PROJECT_NOTES.md
