@@ -1,5 +1,7 @@
 # rl_on_wheels
 
+https://github.com/user-attachments/assets/d807a534-3d17-4f3a-8efa-861af5b8f4ba
+
 Goal-conditioned navigation for a TurtleBot3 Waffle Pi in ROS2 Humble and
 Ignition Fortress. A 2D LiDAR (360 rays reduced to 36 bins) plus the goal
 position in the robot frame, no cameras. Three ways of learning the policy are

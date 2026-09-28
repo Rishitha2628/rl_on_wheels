@@ -28,10 +28,8 @@ demos/
 # Docker
 docker/*.egg-info
 
-# IDE
 .vscode/
 .idea/
-.claude/
 
 # Misc
 *.deb
