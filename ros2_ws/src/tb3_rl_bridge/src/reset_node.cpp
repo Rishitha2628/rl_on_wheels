@@ -136,6 +136,10 @@ public:
     arena_length_  = declare_parameter("arena_length", 4.2);
     arena_width_   = declare_parameter("arena_width",  4.2);
     stage_num_     = declare_parameter("stage",        1);
+    // Mirrors env_bridge_node's parameter of the same name; the launch file
+    // sets both from the single `fast` argument. Controls whether the
+    // post-teleport settle waits burn wall time or sim time -- see settle_wait.
+    real_time_pacing_ = declare_parameter("real_time_pacing", true);
     build_obstacle_rectangles(stage_num_);
 
     // Reentrant group so the odom callback can fire while the service
@@ -184,6 +188,52 @@ public:
   }
 
 private:
+  // ── settle wait ────────────────────────────────────────────────────────────
+  // The reset path needs the world to settle after a teleport and needs the
+  // odom callback to land before it reads the post-teleport pose. Both of
+  // those are *simulated* durations, so under an unlimited-RTF world they
+  // must be measured in sim time. Sleeping on the wall clock there would let
+  // the sim advance by RTF x the intended amount, and since the dynamic
+  // cylinders keep moving throughout, every episode would begin at a
+  // different point in the obstacle cycle than in the real-time arm.
+  //
+  // A wall floor is kept because part of what this waits on is DDS delivery
+  // of /odom, which is wall-bound no matter what the sim clock does. The
+  // executor is multi-threaded, so callbacks continue to fire while we poll.
+  void settle_wait(double seconds)
+  {
+    if (real_time_pacing_) {
+      std::this_thread::sleep_for(
+        std::chrono::milliseconds(static_cast<int>(seconds * 1000.0)));
+      return;
+    }
+
+    const rclcpp::Time     t0     = now();
+    const rclcpp::Duration target = rclcpp::Duration::from_seconds(seconds);
+    const auto wall_start = std::chrono::steady_clock::now();
+    const auto wall_floor = wall_start + std::chrono::milliseconds(25);
+    const auto wall_deadline =
+      wall_start + std::chrono::milliseconds(
+        static_cast<int>(seconds * 100.0 * 1000.0));
+
+    while (rclcpp::ok()) {
+      const auto wall_now = std::chrono::steady_clock::now();
+      if ((now() - t0) >= target && wall_now >= wall_floor) return;
+
+      if (wall_now >= wall_deadline) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), steady_clock_, 5000,
+          "settle_wait: sim clock advanced %.4fs of %.4fs before the wall "
+          "deadline -- sim paused or use_sim_time false. Falling back.",
+          (now() - t0).seconds(), seconds);
+        std::this_thread::sleep_for(
+          std::chrono::milliseconds(static_cast<int>(seconds * 1000.0)));
+        return;
+      }
+      std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+  }
+
   void handle_reset(ResetEpisode::Request::ConstSharedPtr req,
                     ResetEpisode::Response::SharedPtr     res)
   {
@@ -239,7 +289,7 @@ private:
       geometry_msgs::msg::Twist zero;
       cmd_vel_pub_->publish(zero);
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    settle_wait(0.080);
 
     if (!obs_spawned_) {
       spawn_all_obstacles(obs_pos, obs_yaw);
@@ -255,7 +305,7 @@ private:
     // plugin resets its accumulated pose on set_pose (Ignition Fortress behaviour
     // can vary). The robot is stationary (zero cmd_vel above), so there is no
     // movement contaminating the reading.
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    settle_wait(0.300);
 
     float post_odom_x, post_odom_y, post_odom_yaw;
     {
@@ -630,6 +680,10 @@ private:
   double x_min_, x_max_, y_min_, y_max_;
   double min_dist_, sphere_radius_;
   bool   fixed_spawn_;
+  bool   real_time_pacing_;
+  // Wall clock for log throttling -- the node clock follows sim time, which
+  // is the thing that may have stalled when we need to warn.
+  rclcpp::Clock steady_clock_{RCL_STEADY_TIME};
   double spawn_x_, spawn_y_, spawn_theta_;
   // Goal validity parameters
   double arena_length_, arena_width_;

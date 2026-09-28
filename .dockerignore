@@ -1,0 +1,15 @@
+# The Dockerfile only COPYs docker/requirements.txt, ros2_ws/src, and
+# docker/entrypoint.sh. Everything else is bind-mounted at runtime via
+# docker-compose, so shipping it to the daemon as build context just makes
+# every build slower -- demos/ alone is ~2 GB.
+#
+# Exclude everything, then re-add only what the build actually reads.
+*
+
+!docker/requirements.txt
+!docker/entrypoint.sh
+!ros2_ws/src/
+
+# ...but not the build artifacts that colcon leaves inside src/.
+ros2_ws/src/**/__pycache__/
+ros2_ws/src/**/*.pyc

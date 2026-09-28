@@ -146,9 +146,19 @@ public:
       "/obstacle_poses", 10);
 
     start_time_ = this->now();
-    auto period = std::chrono::milliseconds(
-      static_cast<int>(1000.0 / std::max(1.0, update_rate_)));
-    timer_ = create_wall_timer(period, [this]() { tick(); });
+    // Sim-time timer, NOT create_wall_timer. tick() derives the keyframe
+    // phase from this->now(), which follows sim time under use_sim_time, so
+    // the firing rate has to follow sim time too or the two desync. They
+    // agree at real_time_factor 1.0, which is why a wall timer worked until
+    // now; under an unlimited-RTF world a wall timer would resample the same
+    // path far more coarsely per simulated second and the cylinders would
+    // jump between widely separated points instead of sliding along the path.
+    // That changes collision dynamics and what the lidar sees, which would
+    // make the accelerated arm a different task rather than a faster one.
+    timer_ = rclcpp::create_timer(
+      this, get_clock(),
+      rclcpp::Duration::from_seconds(1.0 / std::max(1.0, update_rate_)),
+      [this]() { tick(); });
 
     std::ostringstream oss;
     for (auto & o : obstacles_) {

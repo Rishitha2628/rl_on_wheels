@@ -36,6 +36,22 @@ public:
     collision_thresh_  = declare_parameter("collision_threshold", 0.2);
     goal_tolerance_    = declare_parameter("goal_tolerance",    0.2);
     step_duration_     = declare_parameter("step_duration",     0.1);
+    // Real-time pacing. true (default) → each step blocks step_duration_ of
+    // WALL time, which caps throughput at 1/step_duration_ Hz no matter how
+    // fast Ignition could integrate. That cap is the physical constraint a
+    // real TurtleBot3 imposes, so it stays the default and every previously
+    // recorded result reproduces unchanged.
+    //
+    // false → block until the SIM clock has advanced step_duration_ instead.
+    // Combined with an unlimited <real_time_factor> in the world SDF this
+    // decouples env-step rate from wall time, which is what the high-budget
+    // training arm needs. The observation the policy sees is identical in
+    // both regimes; only how much wall time elapses per step differs.
+    real_time_pacing_  = declare_parameter("real_time_pacing", true);
+    // Reward shaping weights. Defaults reproduce the original reward exactly.
+    // See the comment at r_vlinear for why these are worth varying.
+    w_vlinear_scale_   = declare_parameter("r_vlinear_scale",   10.0);
+    w_vangular_        = declare_parameter("r_vangular_weight",  1.0);
     min_linear_vel_    = declare_parameter("min_linear_vel",   0.0);
     max_linear_vel_    = declare_parameter("max_linear_vel",    0.26);
     max_angular_vel_   = declare_parameter("max_angular_vel",   1.82);
@@ -254,6 +270,46 @@ private:
     return obs;
   }
 
+  // ── sim-time step wait ─────────────────────────────────────────────────────
+  // Block until the SIM clock has advanced `seconds` instead of burning that
+  // much wall time. With an unlimited <real_time_factor> in the world SDF the
+  // sim integrates as fast as the CPU allows, so a 0.1 s step can return in
+  // far less than 100 ms of wall time while the robot still experiences
+  // exactly 0.1 s of simulated motion.
+  //
+  // Guarded by a wall deadline: if /clock stalls (sim paused or crashed, or
+  // use_sim_time left false so the node's clock never advances) this would
+  // otherwise block the /step service forever and deadlock training. On
+  // timeout we warn and fall back to a wall sleep so the episode still
+  // progresses rather than hanging.
+  void wait_sim_time(double seconds)
+  {
+    const rclcpp::Time     t0     = get_clock()->now();
+    const rclcpp::Duration target = rclcpp::Duration::from_seconds(seconds);
+    // 100x the step budget in wall time. Even a barely-faster-than-realtime
+    // sim clears this easily, so it only trips on a genuinely stuck sim.
+    const auto wall_deadline =
+      std::chrono::steady_clock::now() +
+      std::chrono::milliseconds(static_cast<int>(seconds * 100.0 * 1000.0));
+
+    while (rclcpp::ok()) {
+      if (get_clock()->now() - t0 >= target) return;
+
+      if (std::chrono::steady_clock::now() >= wall_deadline) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), steady_clock_, 5000,
+          "sim clock advanced %.4fs of %.4fs before the wall deadline — sim "
+          "paused, crashed, or use_sim_time is false. Falling back to a wall "
+          "sleep; throughput numbers from this run are not trustworthy.",
+          (get_clock()->now() - t0).seconds(), seconds);
+        std::this_thread::sleep_for(
+          std::chrono::milliseconds(static_cast<int>(seconds * 1000.0)));
+        return;
+      }
+      std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+  }
+
   // ── step service ───────────────────────────────────────────────────────────
   void handle_step(Step::Request::ConstSharedPtr req, Step::Response::SharedPtr res)
   {
@@ -272,9 +328,14 @@ private:
     cmd.angular.z = av;
     cmd_vel_pub_->publish(cmd);
 
-    // 3. Sleep — other executor threads update cached sensor data meanwhile
-    std::this_thread::sleep_for(
-      std::chrono::milliseconds(static_cast<int>(step_duration_ * 1000.0)));
+    // 3. Wait out the step — other executor threads update cached sensor
+    //    data meanwhile (the callback group is Reentrant).
+    if (real_time_pacing_) {
+      std::this_thread::sleep_for(
+        std::chrono::milliseconds(static_cast<int>(step_duration_ * 1000.0)));
+    } else {
+      wait_sim_time(step_duration_);
+    }
 
     // 3. Build response from latest cached data (robot keeps moving at cmd_vel)
     std::lock_guard<std::mutex> lk(mtx_);
@@ -347,13 +408,25 @@ private:
       // r_yaw: face the goal. Range [-pi, 0].
       float r_yaw = -std::abs(goal_body);
 
-      // r_vangular: penalise spinning. Range [-max_av^2, 0].
-      float r_vangular = -(av * av);
+      // r_vangular: penalise spinning. Range [-w_ang * max_av^2, 0].
+      float r_vangular = -w_vangular_ * (av * av);
 
       // r_vlinear: pull policy toward max forward speed.
-      // -((max_lv - lv) * 10)^2 — at lv=max_lv → 0, at lv=0 → -((max_lv*10)^2).
+      // -((max_lv - lv) * scale)^2 — at lv=max_lv → 0, at lv=0 → -((max_lv*scale)^2).
+      //
+      // These two weights are exposed because the defaults make the reward
+      // fight the task. At scale=10 and w_ang=1, a robot that slows and turns
+      // -- exactly what obstacle avoidance needs -- accrues about -13 per
+      // step, or roughly -5850 over a 450-step episode, against a collision
+      // penalty of only -2000. Slowing down is then about three times more
+      // expensive than crashing, and the policy learns to drive fast and
+      // straight. That is consistent with the ~60% plateau seen here and in
+      // earlier runs of this project.
+      //
+      // Defaults reproduce the original reward exactly, so existing results
+      // are unaffected; lowering them is an explicit experiment.
       float lv_diff   = static_cast<float>(max_linear_vel_) - lv;
-      float r_vlinear = -(lv_diff * 10.0f) * (lv_diff * 10.0f);
+      float r_vlinear = -(lv_diff * w_vlinear_scale_) * (lv_diff * w_vlinear_scale_);
 
       // r_distance: asymmetric shaping. Range [-1, 1].
       // 0 at start, →+1 at goal, →-1 far away. Grows nonlinearly near goal.
@@ -429,6 +502,13 @@ private:
   double collision_thresh_;
   double goal_tolerance_;
   double step_duration_;
+  bool   real_time_pacing_;
+  float  w_vlinear_scale_;
+  float  w_vangular_;
+  // Steady (wall) clock for log throttling. The node's default clock follows
+  // sim time, which is exactly the thing that may have stalled when we need
+  // to warn — throttling on it would suppress the warning.
+  rclcpp::Clock steady_clock_{RCL_STEADY_TIME};
   double min_linear_vel_;
   double max_linear_vel_;
   double max_angular_vel_;

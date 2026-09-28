@@ -12,6 +12,18 @@ __pycache__/
 
 # Training outputs
 logs/
+checkpoints/
+
+# Demonstration data. The ros2 bags run to several GB and three of them are
+# past GitHub's 100 MB per-file limit, so none of this is tracked.
+demos/
+
+# Model files
+*.zip
+*.pt
+*.pth
+*.bag
+*.db3
 
 # Docker
 docker/*.egg-info
@@ -19,13 +31,15 @@ docker/*.egg-info
 # IDE
 .vscode/
 .idea/
-
-# Misc
-*.zip
-*.bag
 .claude/
 
-# Keep two specific checkpoints (peak + latest) for reproducibility
-!checkpoints/td3_tb3_214000_steps.zip
-!checkpoints/td3_tb3_304000_steps.zip
+# Misc
+*.deb
+
+# Kept local-only
 docs/PROJECT_NOTES.md
+docs/PROJECT_WALKTHROUGH.md
+docs/PROJECT_WALKTHROUGH.docx
+docs/r2rl_plan.html
+docs/media/
+paper/

@@ -7,7 +7,6 @@ import argparse
 import os
 import sys
 
-import gymnasium as gym
 import rclpy
 import yaml
 from stable_baselines3.common.callbacks import CheckpointCallback
@@ -17,31 +16,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from agents.td3_agent import build, load
 from envs.ros2_gym_env import TurtleBot3Env
-
-
-class ActionRepeat(gym.Wrapper):
-    """Hold the agent's action for `n` underlying env steps.
-
-    The policy decides at a slower cadence than the simulator runs, so
-    each decision commits the robot to a direction for a meaningful chunk
-    of time. Rewards are summed over the repeat window; the final
-    transition's done/info is returned.
-    """
-
-    def __init__(self, env: gym.Env, n: int):
-        super().__init__(env)
-        self.n = max(1, int(n))
-
-    def step(self, action):
-        total_reward = 0.0
-        terminated = truncated = False
-        obs, info = None, {}
-        for _ in range(self.n):
-            obs, r, terminated, truncated, info = self.env.step(action)
-            total_reward += float(r)
-            if terminated or truncated:
-                break
-        return obs, total_reward, terminated, truncated, info
+from envs.wrappers import ActionRepeat
 
 
 def parse_args() -> argparse.Namespace:

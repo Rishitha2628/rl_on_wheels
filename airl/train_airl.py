@@ -269,6 +269,7 @@ def main() -> None:
     # highest success rate as `policy_best_eval.zip`.
     best_success = -1.0
     best_path = os.path.join(args.out_dir, "policy_best_eval.zip")
+    best_reward_path = os.path.join(args.out_dir, "reward_net_best_eval.pt")
     eval_log: list[dict] = []
 
     def callback(round_num: int) -> None:
@@ -284,7 +285,20 @@ def main() -> None:
         if sr > best_success:
             best_success = sr
             policy.save(best_path)
-            print(f"  ★ new best — saved {best_path}")
+            # Snapshot the REWARD NET too, not just the policy.
+            #
+            # The adversarial loop can degrade the generator monotonically --
+            # observed here going 0.50 -> 0.30 -> 0.20 -> 0.10 across rounds.
+            # The reward net is fitted against whatever the generator is doing
+            # at the time, so the version saved at the end of training is the
+            # one fitted against the *worst* policy. Freezing that for phase 2
+            # means optimising a reward learned by watching a collapsed agent,
+            # which is exactly how a 50%-capable warm start ends up at ~1%.
+            #
+            # Saving it alongside the best policy keeps the reward paired with
+            # the generator that earned it.
+            torch.save(reward_net.state_dict(), best_reward_path)
+            print(f"  ★ new best — saved {best_path} and {best_reward_path}")
 
     airl.train(total_timesteps=args.total_timesteps, callback=callback)
 
@@ -296,6 +310,13 @@ def main() -> None:
     if best_success >= 0:
         print(f"best env success during AIRL: {best_success:.2f} → "
               f"{best_path}")
+        print(f"  paired reward net: {best_reward_path}")
+        if eval_log and eval_log[-1]["success_rate"] < best_success - 0.05:
+            print(f"  NOTE: the generator ended at "
+                  f"{eval_log[-1]['success_rate']:.2f}, well below its best of "
+                  f"{best_success:.2f}. The adversarial loop degraded it, so "
+                  f"reward_net.pt (saved at the end) is fitted against the "
+                  f"degraded policy. Use reward_net_best_eval.pt for phase 2.")
     metadata = {
         "obs_dim":    int(venv.observation_space.shape[0]),
         "act_dim":    int(venv.action_space.shape[0]),

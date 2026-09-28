@@ -69,11 +69,23 @@ def generate_launch_description():
     motion_mode_override = LaunchConfiguration("motion_mode", default="")
     # >1 slows the cylinders proportionally. 3 = 1/3rd speed, etc.
     obstacle_time_scale = LaunchConfiguration("obstacle_time_scale", default="1.0")
+    # Throughput mode. false (default) = the real-time arm: sim paced at
+    # RTF 1.0 and env_bridge_node sleeping on the wall clock, so the env runs
+    # at 1/step_duration Hz exactly as a physical TurtleBot3 would. true =
+    # the high-budget arm: unlimited-RTF world plus sim-clock stepping, which
+    # decouples env-step rate from wall time without touching the dynamics.
+    fast = LaunchConfiguration("fast", default="false")
+    # Reward shaping weights. Defaults reproduce the original reward exactly;
+    # lowering them is an explicit experiment into whether the ~60% plateau is
+    # the algorithm's or the reward's.
+    r_vlinear_scale = LaunchConfiguration("r_vlinear_scale", default="10.0")
+    r_vangular_weight = LaunchConfiguration("r_vangular_weight", default="1.0")
 
-    # World file resolved at launch time via substitution
+    # World file resolved at launch time via substitution. `fast` swaps in the
+    # *_fast.sdf variant, which differs only in <real_time_factor>.
     world_file = PythonExpression([
         "'", os.path.join(pkg_bridge, "worlds"), "/tb3_stage' + '",
-        stage, "' + '.sdf'"
+        stage, "' + ('_fast' if '", fast, "' == 'true' else '') + '.sdf'"
     ])
 
     # ── Ignition server ───────────────────────────────────────────────────────
@@ -109,6 +121,16 @@ def generate_launch_description():
         DeclareLaunchArgument("obstacle_time_scale", default_value="1.0",
                               description="multiplier for cylinder keyframe playback; "
                                           ">1 slows obstacles (try 3.0 for Nav2-friendly speed)"),
+        DeclareLaunchArgument("r_vlinear_scale", default_value="10.0",
+                              description="scale on the forward-speed penalty; "
+                                          "10.0 reproduces the original reward"),
+        DeclareLaunchArgument("r_vangular_weight", default_value="1.0",
+                              description="weight on the turning penalty; "
+                                          "1.0 reproduces the original reward"),
+        DeclareLaunchArgument("fast", default_value="false",
+                              description="true = unlimited-RTF world + sim-clock stepping "
+                                          "(high interaction-budget arm). false = wall-clock "
+                                          "paced at 1/step_duration Hz, matching real hardware."),
 
         gz_server,
         gz_gui,
@@ -146,10 +168,18 @@ def generate_launch_description():
                 "collision_threshold": collision_thr,
                 "goal_tolerance": 0.40,   # match Nav2's xy_goal_tolerance — demos never drove BC closer than this
                 "step_duration": step_duration,
+                # Wall-clock pacing unless `fast` is on. Kept inverted here so
+                # that the single `fast:=true` switch flips both the world file
+                # and the stepping mode together — they are only valid as a pair.
+                "real_time_pacing": ParameterValue(
+                    PythonExpression(["'", fast, "' != 'true'"]),
+                    value_type=bool),
                 "min_linear_vel":  0.0,    # no backward motion
                 "max_linear_vel":  0.22,
                 "max_angular_vel": 2.0,
                 "clearance_threshold": 0.8,
+                "r_vlinear_scale": ParameterValue(r_vlinear_scale, value_type=float),
+                "r_vangular_weight": ParameterValue(r_vangular_weight, value_type=float),
             }],
         ),
 
@@ -199,6 +229,12 @@ def generate_launch_description():
                     PythonExpression(["6.2 if '", stage, "' == '5' else 4.2"]),
                     value_type=float),
                 "stage":        stage,
+                # Must match env_bridge_node's setting — both are driven by the
+                # single `fast` arg so the settle waits and the step waits agree
+                # on which clock they are measuring.
+                "real_time_pacing": ParameterValue(
+                    PythonExpression(["'", fast, "' != 'true'"]),
+                    value_type=bool),
             }],
         ),
     ]

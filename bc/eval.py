@@ -9,9 +9,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from collections import deque
+from pathlib import Path
 
 import numpy as np
 import rclpy
@@ -34,6 +36,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config",     default="/configs/bc.yaml")
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--episodes",   type=int, default=20)
+    p.add_argument("--no-overrides", action="store_true",
+                   help="Disable the hand-written safety guards, the speed "
+                        "cap and the near-goal P-controller, so the learned "
+                        "policy drives alone. Required for a like-for-like "
+                        "comparison against TD3/AIRL, which get no such help. "
+                        "Default keeps them on, reproducing earlier numbers.")
+    p.add_argument("--out", default=None,
+                   help="write results JSON here (for analyze_crossover.py)")
+    p.add_argument("--quiet", action="store_true",
+                   help="suppress the per-episode lines")
     return p.parse_args()
 
 
@@ -92,64 +104,72 @@ def main() -> None:
                 o = torch.from_numpy(stacked).unsqueeze(0).to(device)
                 a_norm = policy(o).cpu().numpy()[0]
             action = rescale_action(a_norm, act_low, act_high)
-            # Safety speed cap. 0.15 is a compromise — fast enough that BC
-            # isn't crippled, slow enough that the wall-scrape override has
-            # time to react before contact.
-            action[0] = min(action[0], 0.15)
+            # Everything from here to the end of the override block is
+            # hand-written control layered on top of the learned policy. It is
+            # what the BC pipeline ships, but TD3 and AIRL run without any
+            # equivalent, so the budget-sweep comparison uses --no-overrides
+            # and this whole block is skipped.
+            if not args.no_overrides:
+                # Safety speed cap. 0.15 is a compromise — fast enough that BC
+                # isn't crippled, slow enough that the wall-scrape override has
+                # time to react before contact.
+                action[0] = min(action[0], 0.15)
 
-            # Safety / final-approach overrides operate on normalized lidar
-            # values, so thresholds scale inversely with max_lidar_range
-            # (3.5 m for stage 4, 6.0 m for stage 5).
-            max_range = float(cfg["env"].get("max_lidar_range", 3.5))
-            front_threshold = 0.45 / max_range
-            # Side threshold is tighter (0.25 m) than the head-on threshold
-            # (0.45 m). Stage 5's interior corridors regularly put a wall
-            # within 0.45 m on one side as the robot threads between walls,
-            # which made the previous 0.45 m side guard fire constantly and
-            # the robot looked like it stopped mid-path. 0.25 m only fires
-            # when the robot is genuinely about to graze the wall.
-            side_threshold  = 0.25 / max_range
-            front_clearance = obs_bc[39]
-            front_left  = obs_bc[:10]
-            front_right = obs_bc[27:36]
-            min_left  = float(front_left.min())
-            min_right = float(front_right.min())
+                # Safety / final-approach overrides operate on normalized
+                # lidar values, so thresholds scale inversely with
+                # max_lidar_range (3.5 m for stage 4, 6.0 m for stage 5).
+                max_range = float(cfg["env"].get("max_lidar_range", 3.5))
+                front_threshold = 0.45 / max_range
+                # Side threshold is tighter (0.25 m) than the head-on
+                # threshold (0.45 m). Stage 5's interior corridors regularly
+                # put a wall within 0.45 m on one side as the robot threads
+                # between walls, which made the previous 0.45 m side guard
+                # fire constantly and the robot looked like it stopped
+                # mid-path. 0.25 m only fires when the robot is genuinely
+                # about to graze the wall.
+                side_threshold  = 0.25 / max_range
+                front_clearance = obs_bc[39]
+                front_left  = obs_bc[:10]
+                front_right = obs_bc[27:36]
+                min_left  = float(front_left.min())
+                min_right = float(front_right.min())
 
-            safety_fired = False
+                safety_fired = False
 
-            # Hard safety #1: head-on. Anything in the goal cone within
-            # ~0.45 m → kill linear, pivot.
-            if front_clearance < front_threshold:
-                action[0] = 0.0
-                if abs(action[1]) < 0.5:
-                    action[1] = 1.0 if action[1] >= 0 else -1.0
-                safety_fired = True
+                # Hard safety #1: head-on. Anything in the goal cone within
+                # ~0.45 m → kill linear, pivot.
+                if front_clearance < front_threshold:
+                    action[0] = 0.0
+                    if abs(action[1]) < 0.5:
+                        action[1] = 1.0 if action[1] >= 0 else -1.0
+                    safety_fired = True
 
-            # Hard safety #2: side proximity. Anything in the front 180°
-            # within ~0.45 m → kill linear, turn away.
-            if min_left < side_threshold or min_right < side_threshold:
-                action[0] = 0.0
-                if min_left < min_right:
-                    action[1] = -1.5
-                else:
-                    action[1] = +1.5
-                safety_fired = True
+                # Hard safety #2: side proximity. Anything in the front 180°
+                # within ~0.45 m → kill linear, turn away.
+                if min_left < side_threshold or min_right < side_threshold:
+                    action[0] = 0.0
+                    if min_left < min_right:
+                        action[1] = -1.5
+                    else:
+                        action[1] = +1.5
+                    safety_fired = True
 
-            # Final-approach override: when no safety guard fired and we're
-            # within ~0.7 m of the goal, take over BC's output completely
-            # with a simple P-controller: drive forward at 0.10 m/s and
-            # steer proportionally to the goal-body angle. BC learned to
-            # slow + spin in this region because Nav2's demos all end with
-            # a stop at 0.40 m, so it never learned to actually CROSS the
-            # success threshold. This handles the last 0.3 m manually.
-            dist_to_goal_norm = obs_bc[36]
-            near_goal_thresh = 0.7 / max_range
-            if not safety_fired and dist_to_goal_norm < near_goal_thresh:
-                cos_goal = float(obs_bc[37])
-                sin_goal = float(obs_bc[38])
-                goal_angle_body = float(np.arctan2(sin_goal, cos_goal))
-                action[0] = 0.10
-                action[1] = float(np.clip(1.5 * goal_angle_body, -1.0, 1.0))
+                # Final-approach override: when no safety guard fired and
+                # we're within ~0.7 m of the goal, take over BC's output
+                # completely with a simple P-controller: drive forward at
+                # 0.10 m/s and steer proportionally to the goal-body angle.
+                # BC learned to slow + spin in this region because Nav2's
+                # demos all end with a stop at 0.40 m, so it never learned to
+                # actually CROSS the success threshold. This handles the last
+                # 0.3 m manually.
+                dist_to_goal_norm = obs_bc[36]
+                near_goal_thresh = 0.7 / max_range
+                if not safety_fired and dist_to_goal_norm < near_goal_thresh:
+                    cos_goal = float(obs_bc[37])
+                    sin_goal = float(obs_bc[38])
+                    goal_angle_body = float(np.arctan2(sin_goal, cos_goal))
+                    action[0] = 0.10
+                    action[1] = float(np.clip(1.5 * goal_angle_body, -1.0, 1.0))
 
             if ep_len < 5:
                 first_actions.append(action.copy())
@@ -172,13 +192,34 @@ def main() -> None:
         successes += int(success)
         ep_rewards.append(ep_reward)
         ep_lengths.append(ep_len)
-        print(f"[ep {ep+1:3d}/{args.episodes}] success={success} "
-              f"reward={ep_reward:8.1f} len={ep_len:3d}")
+        if not args.quiet:
+            print(f"[ep {ep+1:3d}/{args.episodes}] success={success} "
+                  f"reward={ep_reward:8.1f} len={ep_len:3d}")
 
     sr = successes / max(args.episodes, 1)
-    print(f"\nResult: success_rate={sr:.2f}  ({successes}/{args.episodes})")
+    mode = "policy alone" if args.no_overrides else "with safety overrides"
+    print(f"\nResult ({mode}): success_rate={sr:.2f}  "
+          f"({successes}/{args.episodes})")
     print(f"  mean reward = {np.mean(ep_rewards):.1f}")
     print(f"  mean length = {np.mean(ep_lengths):.1f}")
+
+    if args.out:
+        # Shape matches what analyze_crossover.py reads for the BC reference
+        # line. BC has no budget axis: it trains offline on a fixed demo set,
+        # so its cost is in demonstrations, not environment interactions.
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps({
+            "successes": int(successes),
+            "episodes": int(args.episodes),
+            "success_rate": round(sr, 4),
+            "mean_reward": round(float(np.mean(ep_rewards)), 2),
+            "mean_length": round(float(np.mean(ep_lengths)), 1),
+            "overrides_enabled": not args.no_overrides,
+            "checkpoint": args.checkpoint,
+            "config": args.config,
+        }, indent=2))
+        print(f"  wrote {out}")
 
     env.close()
     if rclpy.ok():

@@ -29,8 +29,22 @@ def _make_action_noise(cfg_noise: dict, action_dim: int):
     return None
 
 
-def build(config: dict, env: TurtleBot3Env) -> TD3:
-    """Instantiate a fresh TD3 model from config."""
+def build(config: dict, env: TurtleBot3Env,
+          seed: int | None = None,
+          gradient_steps_override: int | None = None) -> TD3:
+    """Instantiate a fresh TD3 model from config.
+
+    seed
+        Passed through to SB3 so a sweep can produce genuinely independent
+        runs. None keeps SB3's default (unseeded) behaviour.
+
+    gradient_steps_override
+        Number of gradient steps per collection round, overriding the config.
+        Needed when training on a VecEnv: SB3 collects n_envs transitions per
+        round, so leaving gradient_steps at 1 would drop the update-to-data
+        ratio by a factor of n_envs and quietly make the vectorised run a
+        different algorithm from the single-env one.
+    """
     td3 = config["td3"]
     trn = config["training"]
 
@@ -38,6 +52,8 @@ def build(config: dict, env: TurtleBot3Env) -> TD3:
     action_noise = _make_action_noise(td3.get("action_noise", {}), action_dim)
 
     net_arch = td3.get("net_arch", [512, 512])
+    grad_steps = (int(td3["gradient_steps"]) if gradient_steps_override is None
+                  else int(gradient_steps_override))
 
     model = TD3(
         policy               = "MlpPolicy",
@@ -48,8 +64,9 @@ def build(config: dict, env: TurtleBot3Env) -> TD3:
         tau                  = float(td3["tau"]),
         gamma                = float(td3["gamma"]),
         train_freq           = int(td3["train_freq"]),
-        gradient_steps       = int(td3["gradient_steps"]),
+        gradient_steps       = grad_steps,
         learning_starts      = int(td3["learning_starts"]),
+        seed                 = seed,
         policy_delay         = int(td3.get("policy_delay", 2)),
         target_policy_noise  = float(td3.get("target_policy_noise", 0.2)),
         target_noise_clip    = float(td3.get("target_noise_clip", 0.5)),
