@@ -14,6 +14,9 @@ __pycache__/
 logs/
 checkpoints/
 
+# Machine telemetry from overnight runs
+thermal/
+
 # Demonstration data. The ros2 bags run to several GB and three of them are
 # past GitHub's 100 MB per-file limit, so none of this is tracked.
 demos/

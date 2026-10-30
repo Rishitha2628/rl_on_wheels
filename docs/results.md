@@ -1,5 +1,13 @@
 # Results
 
+> **Note.** This file is the project's running result log and is mostly
+> **stage 4** (5x5 m arena). The headline numbers in the README are **stage 5**
+> (7x7 m arena, 6 moving cylinders), 300 episodes on a pinned goal sequence
+> with several seeds per cell. The two are not comparable: different arena,
+> different episode counts, different seeding. The "Earlier stage-5 numbers"
+> section below is superseded -- at 50 episodes the sampling interval alone is
+> about +-14 points.
+
 All numbers below are stage 4 (5x5 m arena, 7 inner walls, 2 moving cylinders)
 unless noted. Evaluation is a deterministic rollout; success means reaching the
 goal within 0.40 m, which is checked in the C++ bridge and is the same for every
@@ -92,7 +100,7 @@ snapshots the reward net alongside the best-eval policy and `prepare_airl.sh`
 promotes that snapshot; the generator peaked at 0.80 on the rerun and the early
 budget points improved. Phase 2 still walks away from the warm start.
 
-## Earlier stage-5 numbers
+## Earlier stage-5 numbers (superseded)
 
 From earlier runs on the 7x7 arena, 50 episodes per point, no intervals. The
 checkpoints behind these are gone, so they are not reproducible from this repo.
