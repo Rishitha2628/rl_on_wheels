@@ -22,6 +22,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+from bc import history_mask
 from bc.networks import BCPolicy
 from rl.envs.ros2_gym_env import TurtleBot3Env
 
@@ -44,9 +45,66 @@ def parse_args() -> argparse.Namespace:
                         "Default keeps them on, reproducing earlier numbers.")
     p.add_argument("--out", default=None,
                    help="write results JSON here (for analyze_crossover.py)")
+    p.add_argument("--action-repeat", type=int, default=1,
+                   help="hold each action for N bridge steps. 1 is BC's native "
+                        "10 Hz decision rate; 4 matches TD3's 2.5 Hz.")
+    p.add_argument("--lidar-noise", type=float, default=0.0,
+                   help="Gaussian range noise std in METRES on every lidar bin")
+    p.add_argument("--lidar-dropout", type=float, default=0.0,
+                   help="per-bin probability a reading drops out (reads max range)")
+    p.add_argument("--lidar-max-range", type=float, default=None,
+                   help="shorten sensor range in METRES (real LDS-01 is 3.5)")
+    p.add_argument("--motor-tau", type=float, default=0.0,
+                   help="first-order actuator lag time constant in SECONDS")
+    p.add_argument("--history-at-eval", default=None,
+                   choices=["all", "none", "scan", "self"],
+                   help="corrupt part of the frame stack's history at "
+                        "EVALUATION time on an already-trained policy: the "
+                        "named groups keep their history and the rest are "
+                        "overwritten with the current frame. 'self' destroys "
+                        "the scan history, 'scan' destroys the self-motion "
+                        "history, 'none' destroys both. Omit to use whatever "
+                        "the checkpoint was trained with.")
     p.add_argument("--quiet", action="store_true",
                    help="suppress the per-episode lines")
     return p.parse_args()
+
+
+
+def rewind_goal_sequence(node_name: str = "bc_eval_reseed") -> None:
+    """Rewind reset_node's goal RNG so this run starts at goal 1.
+
+    goal_seed makes a session reproducible, but reset_node seeds once at
+    construction and every episode keeps drawing, so back-to-back evaluations
+    against one running sim each got a *different* 300-goal slice. Two runs of
+    an identical configuration came out 7.6 points apart because of it. Calling
+    this first is what actually makes the runs paired.
+
+    A sim built before /reset_goal_sequence existed simply has no such service;
+    we say so loudly rather than silently reporting an unpaired comparison as
+    paired.
+    """
+    from rclpy.node import Node
+    from std_srvs.srv import Trigger
+
+    node = Node(node_name)
+    try:
+        cli = node.create_client(Trigger, "/reset_goal_sequence")
+        if not cli.wait_for_service(timeout_sec=10.0):
+            print("WARNING: /reset_goal_sequence not advertised — this sim predates "
+                  "the fix. Results will NOT be paired with other runs.")
+            return
+        fut = cli.call_async(Trigger.Request())
+        rclpy.spin_until_future_complete(node, fut, timeout_sec=10.0)
+        res = fut.result()
+        if res is None:
+            print("WARNING: /reset_goal_sequence timed out; results may not be paired.")
+        elif not res.success:
+            print(f"WARNING: goal sequence not rewound: {res.message}")
+        else:
+            print(f"  {res.message}")
+    finally:
+        node.destroy_node()
 
 
 def main() -> None:
@@ -71,14 +129,70 @@ def main() -> None:
     # default to 1 = no stacking.
     frame_stack = int(ckpt.get("frame_stack", 1))
     base_obs_dim = int(ckpt["obs_dim"]) // frame_stack
+    # Which channel groups kept their history during training. Read from the
+    # checkpoint rather than a flag, so evaluation cannot disagree with
+    # training about it -- a silent mismatch here would look like a result.
+    history = str(ckpt.get("history", "all"))
+    if frame_stack > 1 and history_mask.resolve(history) != tuple(history_mask.GROUPS):
+        print("  " + history_mask.describe(history, frame_stack, base_obs_dim))
+
+    # --history-at-eval corrupts part of the history of an ALREADY TRAINED
+    # policy, the way --blank-lidar corrupts the scan. It is a deliberate
+    # train/test mismatch, so it is a separate flag from the trained setting
+    # above, it is announced loudly, and both values are recorded in the
+    # output. A drop under it shows what the policy relies on, not what it
+    # learned: the corrupted stack is an input it never saw in training.
+    history_eval = history
+    if args.history_at_eval is not None:
+        history_eval = str(args.history_at_eval)
+        if frame_stack <= 1:
+            print("  WARNING --history-at-eval ignored: frame_stack is 1")
+        elif history_mask.resolve(history_eval) != history_mask.resolve(history):
+            print(f"  !! EVAL-TIME HISTORY MISMATCH (intentional): trained with "
+                  f"keep={history}, scored with keep={history_eval}")
+            print("     " + history_mask.describe(history_eval, frame_stack,
+                                                  base_obs_dim))
 
     if not rclpy.ok():
         rclpy.init()
+    # Must happen before the env takes its first reset, or this run starts
+    # part-way through the goal sequence like every run before the fix.
+    rewind_goal_sequence()
     env = TurtleBot3Env(cfg)
+
+    # ── eval-time substrate interventions (identity unless asked for) ────────
+    _sub = {}
+    if args.motor_tau > 0.0:
+        from rl.envs.substrate_wrappers import ActuationLag
+        _dt = float(cfg["env"].get("step_duration_sec", 0.1))
+        env = ActuationLag(env, tau_sec=args.motor_tau, dt=_dt)
+        _sub["motor_tau"] = args.motor_tau
+    if (args.lidar_noise > 0.0 or args.lidar_dropout > 0.0
+            or args.lidar_max_range is not None):
+        from rl.envs.substrate_wrappers import LidarDegradation
+        env = LidarDegradation(
+            env,
+            noise_m=args.lidar_noise,
+            dropout_p=args.lidar_dropout,
+            max_range_m=args.lidar_max_range,
+            rmax=float(cfg["env"].get("max_lidar_range", 6.0)),
+            bins=int(cfg["env"]["lidar_bins"]),
+            seed=0,
+        )
+        _sub.update(lidar_noise=args.lidar_noise,
+                    lidar_dropout=args.lidar_dropout,
+                    lidar_max_range=args.lidar_max_range)
+    if _sub:
+        print(f"  substrate interventions: {_sub}", flush=True)
 
     successes = 0
     ep_rewards: list[float] = []
     ep_lengths: list[int]   = []
+    # Per-episode outcomes, in order. Every evaluation now rewinds the goal
+    # sequence first, so episode i is the SAME goal across runs; recording the
+    # outcome per episode is what makes a paired test (McNemar) possible.
+    # Keeping only the totals throws that away, which is what we did before.
+    per_episode: list[dict] = []
 
     for ep in range(args.episodes):
         obs, _ = env.reset()
@@ -100,6 +214,8 @@ def main() -> None:
             obs_bc = obs[:base_obs_dim].astype(np.float32)
             obs_buf.append(obs_bc)
             stacked = np.concatenate(list(obs_buf)).astype(np.float32)
+            stacked = history_mask.apply(stacked, history_eval, frame_stack,
+                                         base_obs_dim)
             with torch.no_grad():
                 o = torch.from_numpy(stacked).unsqueeze(0).to(device)
                 a_norm = policy(o).cpu().numpy()[0]
@@ -174,11 +290,18 @@ def main() -> None:
             if ep_len < 5:
                 first_actions.append(action.copy())
                 first_obs.append(obs_bc.copy())
-            obs, r, terminated, truncated, info = env.step(action)
-            done = terminated or truncated
-            ep_reward += float(r)
-            ep_len += 1
-            success = success or bool(info.get("is_success", False))
+            # Hold the action for --action-repeat bridge steps. BC normally
+            # decides every step (10 Hz) while TD3 holds each action for 4
+            # (2.5 Hz), so a straight BC-vs-TD3 comparison mixes algorithm with
+            # control rate. Setting this to 4 matches TD3's decision rate.
+            for _ in range(args.action_repeat):
+                obs, r, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+                ep_reward += float(r)
+                ep_len += 1
+                success = success or bool(info.get("is_success", False))
+                if done:
+                    break
         # Diagnostic print for the first episode only
         if ep == 0:
             print("\n── Diagnostic for episode 1 ─────────────────────────")
@@ -192,12 +315,15 @@ def main() -> None:
         successes += int(success)
         ep_rewards.append(ep_reward)
         ep_lengths.append(ep_len)
+        per_episode.append({"i": ep, "success": bool(success),
+                            "len": int(ep_len), "reward": round(float(ep_reward), 2)})
         if not args.quiet:
             print(f"[ep {ep+1:3d}/{args.episodes}] success={success} "
                   f"reward={ep_reward:8.1f} len={ep_len:3d}")
 
     sr = successes / max(args.episodes, 1)
     mode = "policy alone" if args.no_overrides else "with safety overrides"
+    mode += f", frame_stack={frame_stack}, action_repeat={args.action_repeat}"
     print(f"\nResult ({mode}): success_rate={sr:.2f}  "
           f"({successes}/{args.episodes})")
     print(f"  mean reward = {np.mean(ep_rewards):.1f}")
@@ -216,8 +342,14 @@ def main() -> None:
             "mean_reward": round(float(np.mean(ep_rewards)), 2),
             "mean_length": round(float(np.mean(ep_lengths)), 1),
             "overrides_enabled": not args.no_overrides,
+            "action_repeat": int(args.action_repeat),
+            "substrate": _sub,
+            "frame_stack": int(frame_stack),
+            "history": history,
+            "history_at_eval": history_eval,
             "checkpoint": args.checkpoint,
             "config": args.config,
+            "per_episode": per_episode,
         }, indent=2))
         print(f"  wrote {out}")
 

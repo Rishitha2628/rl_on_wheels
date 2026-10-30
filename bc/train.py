@@ -32,6 +32,9 @@ def normalize_action(a: np.ndarray, low: np.ndarray, high: np.ndarray) -> np.nda
 
 
 # ── frame stacking ────────────────────────────────────────────────────────────
+from bc import history_mask
+
+
 def stack_frames(obs: np.ndarray, ep_id: np.ndarray, k: int) -> np.ndarray:
     """Concatenate the last `k` observations within each episode.
 
@@ -54,7 +57,8 @@ def stack_frames(obs: np.ndarray, ep_id: np.ndarray, k: int) -> np.ndarray:
 
 
 # ── training ──────────────────────────────────────────────────────────────────
-def train(cfg_path: str, dataset_path: str) -> None:
+def train(cfg_path: str, dataset_path: str, seed: int = 0,
+          history: str = "all") -> None:
     with open(cfg_path) as f:
         cfg = yaml.safe_load(f)
 
@@ -79,6 +83,9 @@ def train(cfg_path: str, dataset_path: str) -> None:
         print(f"stacking {frame_stack} frames per sample → "
               f"input dim {obs.shape[1]} → {obs.shape[1] * frame_stack}")
         obs = stack_frames(obs, ep_id, frame_stack)
+        if history_mask.resolve(history) != tuple(history_mask.GROUPS):
+            print("  " + history_mask.describe(history, frame_stack))
+            obs = history_mask.apply(obs, history, frame_stack)
 
     # Rescale demonstrator actions from env bounds → [-1, 1] (tanh output range)
     act_low  = np.array([env_cfg["min_linear_vel"], -env_cfg["max_angular_vel"]],
@@ -96,7 +103,7 @@ def train(cfg_path: str, dataset_path: str) -> None:
     n_val    = max(1, int(len(dataset) * val_frac))
     n_train  = len(dataset) - n_val
     train_ds, val_ds = random_split(dataset, [n_train, n_val],
-                                    generator=torch.Generator().manual_seed(0))
+                                    generator=torch.Generator().manual_seed(seed))
 
     batch_size = int(bc_cfg["batch_size"])
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
@@ -167,6 +174,7 @@ def train(cfg_path: str, dataset_path: str) -> None:
                         "act_low":     act_low,
                         "act_high":    act_high,
                         "frame_stack": frame_stack,
+                        "history":     history,
                         "val_mse":     val_mse}, best_path)
             print(f"  ★ new best — saved {best_path}")
 
@@ -177,7 +185,8 @@ def train(cfg_path: str, dataset_path: str) -> None:
                         "act_dim":     act_dim,
                         "act_low":     act_low,
                         "act_high":    act_high,
-                        "frame_stack": frame_stack}, ckpt)
+                        "frame_stack": frame_stack,
+                        "history":     history}, ckpt)
 
     print(f"done. best val_mse = {best_val:.4f}")
 
@@ -186,12 +195,24 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config",  default="/configs/bc.yaml")
     p.add_argument("--dataset", required=True, help="path to .npz from build_dataset.py")
+    p.add_argument("--history", default="all",
+                   help="which channel groups keep their history across the "
+                        "frame stack: 'all', 'none', 'scan', 'self', or a '+' "
+                        "join. Frozen channels are copied from the current "
+                        "frame, so the input dimension never changes.")
+    p.add_argument("--seed", type=int, default=0,
+                   help="training seed: controls the train/val split and weight "
+                        "init. Needed because a BC result from one seed is one "
+                        "measurement, the same objection we raise about RL seeds.")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    train(args.config, args.dataset)
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    train(args.config, args.dataset, seed=args.seed,
+          history=args.history)
 
 
 if __name__ == "__main__":
