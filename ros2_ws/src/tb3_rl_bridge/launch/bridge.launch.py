@@ -49,6 +49,10 @@ STAGE_OBSTACLES = {
     "5":  {"active": "1,2,3,4,5,6", "motion_mode": "keyframe",
            "base_x": [2.8, -2.8,  2.8, -2.8, -2.8, 2.8],
            "base_y": [2.8, -2.8, -2.8,  2.8,  0.0, 0.0]},
+    # Stage 6 -- transfer-test arena, four cylinders in a 6x6 room.
+    "6":  {"active": "1,2,3,4", "motion_mode": "keyframe",
+           "base_x": [2.2, -2.2, 2.2, -2.2, 0.0, 0.0],
+           "base_y": [2.2, -2.2, -2.2, 2.2, 0.0, 0.0]},
 }
 
 
@@ -80,6 +84,10 @@ def generate_launch_description():
     # the algorithm's or the reward's.
     r_vlinear_scale = LaunchConfiguration("r_vlinear_scale", default="10.0")
     r_vangular_weight = LaunchConfiguration("r_vangular_weight", default="1.0")
+    # Fixed goal sequence for evaluation. -1 keeps the nondeterministic default;
+    # a non-negative value makes every method meet the same episodes, so results
+    # can be compared pairwise.
+    goal_seed = LaunchConfiguration("goal_seed", default="-1")
 
     # World file resolved at launch time via substitution. `fast` swaps in the
     # *_fast.sdf variant, which differs only in <real_time_factor>.
@@ -124,6 +132,10 @@ def generate_launch_description():
         DeclareLaunchArgument("r_vlinear_scale", default_value="10.0",
                               description="scale on the forward-speed penalty; "
                                           "10.0 reproduces the original reward"),
+        DeclareLaunchArgument("goal_seed", default_value="-1",
+                              description="seed for goal sampling; -1 = random. "
+                                          "Set it to evaluate every method on the "
+                                          "same episode sequence."),
         DeclareLaunchArgument("r_vangular_weight", default_value="1.0",
                               description="weight on the turning penalty; "
                                           "1.0 reproduces the original reward"),
@@ -192,19 +204,19 @@ def generate_launch_description():
                 "use_sim_time": use_sim_time,
                 "tb3_model": "waffle_pi",
                 "world_name": "empty",
-                # Arena bounds: walls at ±2.425 (5x5 stages) or ±3.425 (stage 5),
-                # clear inner area ≈ [-2.0, 2.0] or [-2.5, 2.5] respectively.
+                # Arena bounds: walls at ±2.425 (5x5 stages), ±3.425 (stage 5) or
+                # ±2.925 (stage 6); clear inner area ≈ ±2.0, ±2.5, ±2.6.
                 "world_x_min": ParameterValue(
-                    PythonExpression(["-2.5 if '", stage, "' == '5' else -2.0"]),
+                    PythonExpression(["-2.5 if '", stage, "' == '5' else -2.6 if '", stage, "' == '6' else -2.0"]),
                     value_type=float),
                 "world_x_max": ParameterValue(
-                    PythonExpression(["2.5 if '", stage, "' == '5' else 2.0"]),
+                    PythonExpression(["2.5 if '", stage, "' == '5' else 2.6 if '", stage, "' == '6' else 2.0"]),
                     value_type=float),
                 "world_y_min": ParameterValue(
-                    PythonExpression(["-2.5 if '", stage, "' == '5' else -2.0"]),
+                    PythonExpression(["-2.5 if '", stage, "' == '5' else -2.6 if '", stage, "' == '6' else -2.0"]),
                     value_type=float),
                 "world_y_max": ParameterValue(
-                    PythonExpression(["2.5 if '", stage, "' == '5' else 2.0"]),
+                    PythonExpression(["2.5 if '", stage, "' == '5' else 2.6 if '", stage, "' == '6' else 2.0"]),
                     value_type=float),
                 "robot_min_goal_dist": 0.5,
                 # Sphere radius matches goal_tolerance so the visible sphere
@@ -223,12 +235,13 @@ def generate_launch_description():
                 # Goal validity needs stage to know which inner-wall
                 # rectangles to forbid.
                 "arena_length": ParameterValue(
-                    PythonExpression(["6.2 if '", stage, "' == '5' else 4.2"]),
+                    PythonExpression(["6.2 if '", stage, "' == '5' else 5.4 if '", stage, "' == '6' else 4.2"]),
                     value_type=float),
                 "arena_width": ParameterValue(
-                    PythonExpression(["6.2 if '", stage, "' == '5' else 4.2"]),
+                    PythonExpression(["6.2 if '", stage, "' == '5' else 5.4 if '", stage, "' == '6' else 4.2"]),
                     value_type=float),
                 "stage":        stage,
+                "goal_seed": ParameterValue(goal_seed, value_type=int),
                 # Must match env_bridge_node's setting — both are driven by the
                 # single `fast` arg so the settle waits and the step waits agree
                 # on which clock they are measuring.

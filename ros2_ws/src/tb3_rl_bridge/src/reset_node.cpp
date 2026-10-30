@@ -21,6 +21,7 @@
 #include <ignition/msgs/entity.pb.h>
 #include <ignition/msgs/entity_factory.pb.h>
 
+#include "std_srvs/srv/trigger.hpp"
 #include "tb3_rl_bridge/srv/reset_episode.hpp"
 
 using ResetEpisode = tb3_rl_bridge::srv::ResetEpisode;
@@ -110,8 +111,25 @@ class ResetNode : public rclcpp::Node
 {
 public:
   ResetNode()
-  : Node("reset_node"), rng_(std::random_device{}()), goal_spawned_(false), obs_spawned_(false)
+  : Node("reset_node"), goal_spawned_(false), obs_spawned_(false)
   {
+    // Goal sampling RNG. A negative seed keeps the old behaviour (nondeterministic,
+    // seeded from random_device); any non-negative value makes the episode sequence
+    // reproducible.
+    //
+    // Evaluations were previously unpaired: every method met a different set of
+    // random goals, so part of the difference between two reported numbers was
+    // just which goals each one happened to draw. Fixing the seed lets every
+    // method be scored on the same episodes, which permits paired tests and
+    // costs nothing.
+    eval_seed_ = declare_parameter("goal_seed", -1);
+    if (eval_seed_ >= 0) {
+      rng_.seed(static_cast<std::mt19937::result_type>(eval_seed_));
+      RCLCPP_INFO(get_logger(), "goal sampling seeded with %ld (reproducible)",
+                  static_cast<long>(eval_seed_));
+    } else {
+      rng_.seed(std::random_device{}());
+    }
     tb3_model_     = declare_parameter("tb3_model", std::string("waffle_pi"));
     x_min_         = declare_parameter("world_x_min", -2.0);
     x_max_         = declare_parameter("world_x_max",  2.0);
@@ -172,6 +190,35 @@ public:
       [this](ResetEpisode::Request::ConstSharedPtr req,
              ResetEpisode::Response::SharedPtr     res) {
         handle_reset(req, res);
+      });
+
+    // Rewind the goal sequence to its start.
+    //
+    // goal_seed makes a SESSION reproducible, but the RNG is seeded once here
+    // in the constructor and every episode keeps drawing from it. Successive
+    // evaluations against one running fleet therefore consume successive
+    // draws -- the first run sees goals 1..300, the second 301..600 -- so the
+    // runs were never scored on the same goals, which is what "paired" was
+    // supposed to mean. Measured cost of that: two runs of one identical
+    // configuration came out 7.6 points apart.
+    //
+    // Every evaluation client calls this before its first episode, so each one
+    // starts from the same point in the same sequence.
+    reseed_srv_ = create_service<std_srvs::srv::Trigger>(
+      "/reset_goal_sequence",
+      [this](std_srvs::srv::Trigger::Request::ConstSharedPtr,
+             std_srvs::srv::Trigger::Response::SharedPtr res) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (eval_seed_ < 0) {
+          res->success = false;
+          res->message = "goal_seed < 0: goals are nondeterministic, nothing to rewind";
+          RCLCPP_WARN(get_logger(), "%s", res->message.c_str());
+          return;
+        }
+        rng_.seed(static_cast<std::mt19937::result_type>(eval_seed_));
+        res->success = true;
+        res->message = "goal sequence rewound to seed " + std::to_string(eval_seed_);
+        RCLCPP_INFO(get_logger(), "%s", res->message.c_str());
       });
 
     // Delete any leftover goal_marker from a previous run
@@ -237,6 +284,7 @@ private:
   void handle_reset(ResetEpisode::Request::ConstSharedPtr req,
                     ResetEpisode::Response::SharedPtr     res)
   {
+
     RCLCPP_INFO(get_logger(), "handle_reset: spawn_only=%d random_pose=%d radius=%.2f",
                 req->spawn_only, req->random_pose, req->goal_radius);
 
@@ -393,13 +441,14 @@ private:
   void build_obstacle_rectangles(int stage)
   {
     obstacle_rectangles_.clear();
-    const bool has_inner_walls = (stage == 4 || stage == 5);
+    const bool has_inner_walls = (stage == 4 || stage == 5 || stage == 6);
     if (!has_inner_walls) return;
 
     constexpr float MARGIN = 0.3f;          // no-goal-spawn margin
     constexpr float WALL_L = 1.0f;          // inner wall length
     constexpr float WALL_W = 0.15f;         // inner wall thickness
-    struct WallSpec { float x, y, yaw; };
+    // len defaults to WALL_L; stage 6 uses 2 m walls, not 1 m.
+    struct WallSpec { float x, y, yaw; float len = WALL_L; };
 
     // Stage 4 — canonical 7-wall layout, 5x5 arena.
     static const WallSpec walls_stage4[] = {
@@ -424,9 +473,24 @@ private:
       {  1.5f, -2.5f,    0.0f      },
     };
 
+    // Stage 6 -- a deliberately different arena, used only to test transfer:
+    // a 6x6 room split into chambers by six 2 m walls.
+    static const WallSpec walls_stage6[] = {
+      {  -1.80f,   1.00f,   0.0000f, 2.0f },
+      {   1.80f,   1.00f,   0.0000f, 2.0f },
+      {   0.00f,   1.90f,   1.5708f, 2.0f },
+      {  -1.60f,  -1.40f,   1.5708f, 2.0f },
+      {   1.00f,  -1.20f,   1.5708f, 2.0f },
+      {   0.00f,  -2.30f,   0.0000f, 2.0f },
+      {  -0.30f,  -1.00f,   0.0000f, 1.2f },
+    };
+
     const WallSpec * walls;
     size_t n_walls;
-    if (stage == 5) {
+    if (stage == 6) {
+      walls = walls_stage6;
+      n_walls = sizeof(walls_stage6) / sizeof(walls_stage6[0]);
+    } else if (stage == 5) {
       walls = walls_stage5;
       n_walls = sizeof(walls_stage5) / sizeof(walls_stage5[0]);
     } else {
@@ -437,8 +501,10 @@ private:
     for (size_t i = 0; i < n_walls; ++i) {
       const auto & w = walls[i];
       bool horizontal = std::abs(w.yaw) < 1e-3f;
-      float sx = horizontal ? (WALL_L + 2 * MARGIN) : (WALL_W + 2 * MARGIN);
-      float sy = horizontal ? (WALL_W + 2 * MARGIN) : (WALL_L + 2 * MARGIN);
+      // w.len, not WALL_L: stage 6's walls are 2 m, and using the 1 m constant
+      // would leave half of each wall outside its no-goal-spawn rectangle.
+      float sx = horizontal ? (w.len + 2 * MARGIN) : (WALL_W + 2 * MARGIN);
+      float sy = horizontal ? (WALL_W + 2 * MARGIN) : (w.len + 2 * MARGIN);
       Rect r;
       r.x_min = w.x - sx * 0.5f;
       r.x_max = w.x + sx * 0.5f;
@@ -708,6 +774,7 @@ private:
 
   int    n_obstacles_;
   std::mt19937 rng_;
+  int64_t      eval_seed_;
   bool goal_spawned_;
   bool obs_spawned_;
   std::vector<std::pair<float,float>> obs_xy_;
@@ -719,6 +786,7 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr   marker_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr         cmd_vel_pub_;
   rclcpp::Service<ResetEpisode>::SharedPtr                        reset_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr              reseed_srv_;
 };
 
 int main(int argc, char * argv[])

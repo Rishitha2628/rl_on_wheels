@@ -29,6 +29,11 @@ DOMAIN_BASE=40
 # original reward exactly.
 R_VLINEAR_SCALE=10.0
 R_VANGULAR_WEIGHT=1.0
+# -1 = random goals. Set a value to give every instance the same episode
+# sequence, so methods can be compared on identical goals.
+DYN_OBS=true
+OBS_TIME_SCALE=1.0
+GOAL_SEED=-1
 FLEET_DIR=/logs/fleet
 READY_TIMEOUT=120
 
@@ -41,6 +46,9 @@ while [[ $# -gt 0 ]]; do
     --domain-base)   DOMAIN_BASE="$2"; shift 2 ;;
     --r-vlinear)     R_VLINEAR_SCALE="$2"; shift 2 ;;
     --r-vangular)    R_VANGULAR_WEIGHT="$2"; shift 2 ;;
+    --goal-seed)     GOAL_SEED="$2"; shift 2 ;;
+    --static-obs)    DYN_OBS=false; shift ;;
+    --obs-time-scale) OBS_TIME_SCALE="$2"; shift 2 ;;
     --stop)          STOP=1; shift ;;
     -h|--help)       sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
@@ -90,9 +98,18 @@ stop_fleet >/dev/null 2>&1
 
 echo "[fleet] launching $N instance(s), stage=$STAGE fast=$FAST domains=${DOMAIN_BASE}..$((DOMAIN_BASE + N - 1))"
 echo "[fleet] reward weights: r_vlinear_scale=$R_VLINEAR_SCALE r_vangular_weight=$R_VANGULAR_WEIGHT"
+if (( GOAL_SEED >= 0 )); then
+  echo "[fleet] goal seeds: ${GOAL_SEED}..$((GOAL_SEED + N - 1)) (reproducible episodes)"
+fi
 
 for ((i = 0; i < N; i++)); do
   domain=$((DOMAIN_BASE + i))
+  # Each instance gets its own seed offset. Giving every instance the same seed
+  # would make all N of them replay one identical episode sequence, so a
+  # 300-episode evaluation would really be ~300/N distinct goals repeated.
+  # Offsetting keeps the sequences distinct while still pairing across methods:
+  # instance i always sees the same goals whichever method is being scored.
+  if (( GOAL_SEED >= 0 )); then inst_seed=$((GOAL_SEED + i)); else inst_seed=-1; fi
   # setsid so each instance gets its own process group and the whole tree can
   # be signalled at once -- ros2 launch otherwise leaves orphaned gz servers.
   setsid env \
@@ -102,6 +119,9 @@ for ((i = 0; i < N; i++)); do
       stage:="$STAGE" headless:=true fast:="$FAST" \
       r_vlinear_scale:="$R_VLINEAR_SCALE" \
       r_vangular_weight:="$R_VANGULAR_WEIGHT" \
+      goal_seed:="$inst_seed" \
+      dynamic_obstacles:="$DYN_OBS" \
+      obstacle_time_scale:="$OBS_TIME_SCALE" \
     > "$FLEET_DIR/env${i}.log" 2>&1 &
   echo $! >> "$FLEET_DIR/pids"
   echo "[fleet]   instance $i -> ROS_DOMAIN_ID=$domain IGN_PARTITION=tb3env${i}"

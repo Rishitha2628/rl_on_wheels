@@ -11,6 +11,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -46,7 +47,7 @@ target_link_libraries(env_bridge_node
 # ── reset_node ────────────────────────────────────────────────────────────────
 add_executable(reset_node src/reset_node.cpp)
 ament_target_dependencies(reset_node
-  rclcpp std_msgs geometry_msgs nav_msgs visualization_msgs)
+  rclcpp std_msgs std_srvs geometry_msgs nav_msgs visualization_msgs)
 target_link_libraries(reset_node
   "${cpp_typesupport_target}"
   ignition-transport11::core
