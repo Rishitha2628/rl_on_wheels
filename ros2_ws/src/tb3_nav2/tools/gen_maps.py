@@ -79,23 +79,43 @@ INNER_WALLS_STAGE5 = [
     WallRect( 1.5,  -2.5,   1.0, 0.15,  0.0),
 ]
 
+# Outer walls for the 6x6 stage 6 arena, walls at +/-2.925.
+OUTER_WALLS_6x6 = [
+    WallRect(-2.925, 0.0,    6.0, 0.15,  math.pi / 2),
+    WallRect( 2.925, 0.0,    6.0, 0.15, -math.pi / 2),
+    WallRect( 0.0,   2.925,  6.0, 0.15,  0.0),
+    WallRect( 0.0,  -2.925,  6.0, 0.15,  math.pi),
+]
+
+# Stage 6 -- the unseen transfer arena: seven interior walls, six of them 2 m.
+# Matches tb3_stage6.sdf and walls_stage6[] in reset_node.cpp.
+INNER_WALLS_STAGE6 = [
+    WallRect(-1.80,  1.00,   2.0, 0.15,  0.0),
+    WallRect( 1.80,  1.00,   2.0, 0.15,  0.0),
+    WallRect( 0.00,  1.90,   2.0, 0.15,  math.pi / 2),
+    WallRect(-1.60, -1.40,   2.0, 0.15,  math.pi / 2),
+    WallRect( 1.00, -1.20,   2.0, 0.15,  math.pi / 2),
+    WallRect( 0.00, -2.30,   2.0, 0.15,  0.0),
+    WallRect(-0.30, -1.00,   1.2, 0.15,  0.0),
+]
+
 STATIC_CYLINDERS = [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)]
 CYLINDER_RADIUS = 0.15
 
 # Per-stage flags
-HAS_INNER      = {1: False, 2: False, 3: False, 4: True,  5: True}
-HAS_STATIC_CYL = {1: False, 2: True,  3: False, 4: False, 5: False}
+HAS_INNER      = {1: False, 2: False, 3: False, 4: True,  5: True,  6: True}
+HAS_STATIC_CYL = {1: False, 2: True,  3: False, 4: False, 5: False, 6: False}
 
 # Per-stage half-extent of the rasterized map (= arena-side/2 + 1 m margin).
 # Defaults to 2.8 m for the 5x5 arenas; stage 5 uses 3.8 m for its 7x7 arena.
 HALF_EXTENT_DEFAULT = 2.8
-HALF_EXTENT_BY_STAGE = {5: 3.8}
+HALF_EXTENT_BY_STAGE = {5: 3.8, 6: 3.3}
 
 # Per-stage outer-wall set.
-OUTER_WALLS_BY_STAGE = {5: OUTER_WALLS_7x7}
+OUTER_WALLS_BY_STAGE = {5: OUTER_WALLS_7x7, 6: OUTER_WALLS_6x6}
 
 # Per-stage inner-wall overrides. Default is INNER_WALLS.
-INNER_WALLS_BY_STAGE = {5: INNER_WALLS_STAGE5}
+INNER_WALLS_BY_STAGE = {5: INNER_WALLS_STAGE5, 6: INNER_WALLS_STAGE6}
 
 
 # ── rasterization ─────────────────────────────────────────────────────────────
@@ -184,7 +204,7 @@ def write_yaml(path: Path, pgm_name: str, half_ext: float) -> None:
 
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for stage in range(1, 6):
+    for stage in range(1, 7):
         grid, half_ext = build_stage_map(stage)
         pgm_name = f"tb3_stage{stage}.pgm"
         write_pgm(OUT_DIR / pgm_name, grid)
